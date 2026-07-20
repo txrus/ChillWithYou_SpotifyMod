@@ -27,6 +27,14 @@ namespace ChillWithYou_SpotifyMod
         public string ContextUri { get; set; }
     }
 
+    // รายการ playlist ของ user เองจาก /me/playlists (ใช้แสดงเป็นเมนูให้กดเลือกเล่น)
+    public class UserPlaylistInfo
+    {
+        public string Id;
+        public string Name;
+        public int TrackCount;
+    }
+
     internal static class SpotifyWebApi
     {
         private static readonly HttpClient Http = new HttpClient();
@@ -35,11 +43,15 @@ namespace ChillWithYou_SpotifyMod
         private static string _lastPlaylistId = null;
         private static PlaylistInfo _cachedPlaylistInfo = null;
 
+        // รายชื่อ playlist ของ user - cache ไว้ทั้ง session เพราะแทบไม่เปลี่ยนระหว่างเล่นเกม
+        private static List<UserPlaylistInfo> _cachedMyPlaylists = null;
+
         // ล้างความจำ playlist ล่าสุด - ใช้ตอนผู้ใช้กดปุ่ม refresh เพื่อบังคับดึงข้อมูล/คิวใหม่จริงๆ
         public static void InvalidateCache()
         {
             _lastPlaylistId = null;
             _cachedPlaylistInfo = null;
+            _cachedMyPlaylists = null;
         }
 
         private static async Task<bool> EnsureValidTokenAsync()
@@ -135,6 +147,72 @@ namespace ChillWithYou_SpotifyMod
             catch (Exception ex)
             {
                 Plugin.Log.LogError($"[SpotifyWebApi] GetCurrentPlaylist exception: {ex}");
+                return null;
+            }
+        }
+
+        // ดึงรายชื่อ playlist ของ user เอง (GET /me/playlists - ใช้ scope playlist-read-private ที่ขอไว้แล้ว
+        // และ endpoint นี้ไม่โดนบล็อกใน development mode ต่างจากการอ่าน track list ของ playlist)
+        // คืน null = โหลดพลาดและไม่มี cache เก่าให้ใช้ / กด ↻ ที่ header จะล้าง cache ผ่าน InvalidateCache
+        public static async Task<List<UserPlaylistInfo>> GetMyPlaylistsAsync(int limit = 20)
+        {
+            if (_cachedMyPlaylists != null)
+                return _cachedMyPlaylists;
+
+            if (SpotifyRateLimiter.IsBlocked)
+            {
+                Plugin.Log.LogInfo($"[SpotifyWebApi] ข้าม GetMyPlaylists: ยังโดน rate limit อยู่อีก {SpotifyRateLimiter.RemainingBlock.TotalSeconds:F0} วิ");
+                return null;
+            }
+
+            if (!await EnsureValidTokenAsync())
+                return null;
+
+            try
+            {
+                var request = new HttpRequestMessage(HttpMethod.Get,
+                    $"https://api.spotify.com/v1/me/playlists?limit={limit}");
+                request.Headers.Add("Authorization", $"Bearer {SpotifyAuth.AccessToken}");
+                HttpResponseMessage resp = await Http.SendAsync(request);
+
+                if (resp.StatusCode == (System.Net.HttpStatusCode)429)
+                {
+                    SpotifyRateLimiter.ReportTooManyRequests(resp);
+                    return null;
+                }
+
+                if (!resp.IsSuccessStatusCode)
+                {
+                    string errBody = await resp.Content.ReadAsStringAsync();
+                    Plugin.Log.LogWarning($"[SpotifyWebApi] ดึงรายชื่อ playlist พลาด (Status: {resp.StatusCode}) - {errBody}");
+                    return null;
+                }
+
+                string json = await resp.Content.ReadAsStringAsync();
+                JObject obj = JObject.Parse(json);
+
+                var playlists = new List<UserPlaylistInfo>();
+                if (obj["items"] is JArray items)
+                {
+                    foreach (JToken it in items)
+                    {
+                        if (!(it is JObject p)) continue; // Spotify ส่ง item เป็น null มาได้เป็นครั้งคราว
+
+                        playlists.Add(new UserPlaylistInfo
+                        {
+                            Id = (string)p["id"],
+                            Name = (string)p["name"],
+                            TrackCount = (int?)(p["tracks"] as JObject)?["total"] ?? 0,
+                        });
+                    }
+                }
+
+                _cachedMyPlaylists = playlists;
+                return playlists;
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"[SpotifyWebApi] GetMyPlaylists exception: {ex}");
                 return null;
             }
         }
