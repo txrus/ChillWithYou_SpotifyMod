@@ -166,7 +166,6 @@ namespace ChillWithYou_SpotifyMod
                 coverLe.preferredHeight = 64f;
                 _coverImage = coverGo.AddComponent<Image>();
                 _coverImage.color = new Color(0.16f, 0.15f, 0.20f, 1f); // placeholder เข้มๆ จนกว่าจะโหลดปกอัลบั้มจริง
-                AddCoverFrame(coverGo.transform, LineColor);
 
                 GameObject textCol = new GameObject("TextCol");
                 textCol.transform.SetParent(headerRow.transform, worldPositionStays: false);
@@ -277,7 +276,6 @@ namespace ChillWithYou_SpotifyMod
                 plCoverLe.preferredHeight = 48f;
                 _playlistImage = plCoverGo.AddComponent<Image>();
                 _playlistImage.color = new Color(0.16f, 0.15f, 0.20f, 1f);
-                AddCoverFrame(plCoverGo.transform, LineSoft);
 
                 GameObject plNameCol = new GameObject("NameCol");
                 plNameCol.transform.SetParent(_playlistHeader.transform, worldPositionStays: false);
@@ -989,20 +987,6 @@ namespace ChillWithYou_SpotifyMod
             text.raycastTarget = false;
 
             return btn;
-        }
-
-        // กรอบมุมโค้งทับบนปกอัลบั้ม/ปก playlist ให้เข้ากับกรอบขาวรอบองค์ประกอบของเกม
-        private static void AddCoverFrame(Transform cover, Color color)
-        {
-            GameObject frame = new GameObject("Frame");
-            frame.transform.SetParent(cover, worldPositionStays: false);
-            RectTransform rt = frame.AddComponent<RectTransform>();
-            rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one; rt.sizeDelta = Vector2.zero;
-            Image img = frame.AddComponent<Image>();
-            img.sprite = UiSprites.RoundedOutline;
-            img.type = Image.Type.Sliced;
-            img.color = color;
-            img.raycastTarget = false;
         }
 
         // พยายามใช้ฟอนต์ UI ของเกมเองให้ section กลมกลืน - หาไม่ได้ค่อย fallback เป็น Arial
