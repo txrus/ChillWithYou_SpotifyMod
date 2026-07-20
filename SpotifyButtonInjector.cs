@@ -30,6 +30,7 @@ namespace ChillWithYou_SpotifyMod
         private static GameObject _playlistHeader;
         private static Image _playlistImage;
         private static Text _playlistNameText;
+        private static Text _playlistSubText; // "PLAYING FROM PLAYLIST" - ซ่อนเมื่อไม่ได้เล่นจาก playlist
 
         private static InputField _searchInput;
         private static GameObject _searchResultsList;
@@ -56,11 +57,16 @@ namespace ChillWithYou_SpotifyMod
         private static bool _subscribedToTick;
         private static bool _songEndTriggerFired;
 
-        private static readonly Color BackColor = new Color(0.1f, 0.1f, 0.1f, 0.6f);
-        private static readonly Color ButtonNormal = new Color(0.25f, 0.25f, 0.25f, 1f);
-        private static readonly Color ButtonHighlight = new Color(0.35f, 0.65f, 1f, 1f);
-        private static readonly Color ButtonPressed = new Color(0.15f, 0.15f, 0.15f, 1f);
-        private static readonly Color ButtonActive = new Color(0.11f, 0.73f, 0.33f, 1f); // เขียวใช้เป็นสี fill ของ progress bar
+        // === โทนสีตามภาษาดีไซน์ของเกม: แผงดำโปร่งแสง + ขอบ/เส้นขาว + ตัวหนังสือขาวสามระดับ ===
+        private static readonly Color PanelColor = new Color(0.03f, 0.03f, 0.055f, 0.55f);
+        private static readonly Color LineColor = new Color(1f, 1f, 1f, 0.85f);     // ขอบหลัก (ปุ่ม/กรอบปก)
+        private static readonly Color LineSoft = new Color(1f, 1f, 1f, 0.32f);      // เส้นคั่น/ขอบรอง
+        private static readonly Color TextSecondary = new Color(1f, 1f, 1f, 0.65f);
+        private static readonly Color TextFaint = new Color(1f, 1f, 1f, 0.45f);
+        private static readonly Color HoverFill = new Color(1f, 1f, 1f, 0.08f);     // fill ขาวจางตอนชี้
+        private static readonly Color PressFill = new Color(1f, 1f, 1f, 0.18f);     // fill ขาวตอนกด
+        // เขียว Spotify ใช้เชิงความหมายเท่านั้น: progress fill, เพลงที่กำลังเล่น, ปุ่ม Connect
+        private static readonly Color ButtonActive = new Color(0.11f, 0.73f, 0.33f, 1f);
 
         public static void Inject(ScrollRect scrollRect, GameObject buttonsParent)
         {
@@ -74,7 +80,7 @@ namespace ChillWithYou_SpotifyMod
             try
             {
                 _cachedScrollRect = scrollRect;
-                _arialFont = Resources.GetBuiltinResource<Font>("Arial.ttf");
+                _arialFont = FindUiFont();
                 Transform parentTransform = buttonsParent.transform;
 
                 VerticalLayoutGroup contentVlg = parentTransform.GetComponent<VerticalLayoutGroup>();
@@ -91,7 +97,7 @@ namespace ChillWithYou_SpotifyMod
                 rootRt.sizeDelta = new Vector2(0f, 0f);
 
                 Image bg = _spotifySection.AddComponent<Image>();
-                bg.color = BackColor;
+                bg.color = PanelColor;
 
                 VerticalLayoutGroup vlg = _spotifySection.AddComponent<VerticalLayoutGroup>();
                 vlg.childForceExpandWidth = true;
@@ -105,7 +111,36 @@ namespace ChillWithYou_SpotifyMod
                 fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
                 fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-                CreateText(_spotifySection.transform, "SPOTIFY", 14, TextAnchor.MiddleLeft);
+                // --- หัวเรื่อง "SPOTIFY" ตัวเล็กเว้นช่องไฟ + เส้นบางลากไปสุดขวา แบบ header ของเกม ---
+                GameObject eyebrowRow = new GameObject("EyebrowRow");
+                eyebrowRow.transform.SetParent(_spotifySection.transform, worldPositionStays: false);
+                eyebrowRow.AddComponent<RectTransform>();
+                LayoutElement eyebrowLe = eyebrowRow.AddComponent<LayoutElement>();
+                eyebrowLe.preferredHeight = 18f;
+                eyebrowLe.minHeight = 18f;
+                HorizontalLayoutGroup eyebrowHlg = eyebrowRow.AddComponent<HorizontalLayoutGroup>();
+                eyebrowHlg.childForceExpandWidth = false;
+                eyebrowHlg.childForceExpandHeight = false;
+                eyebrowHlg.childControlWidth = true;
+                eyebrowHlg.childControlHeight = true;
+                eyebrowHlg.spacing = 10f;
+                eyebrowHlg.childAlignment = TextAnchor.MiddleLeft;
+
+                Text eyebrow = CreateText(eyebrowRow.transform, "S P O T I F Y", 11, TextAnchor.MiddleLeft);
+                eyebrow.fontStyle = FontStyle.Bold;
+                eyebrow.color = TextSecondary;
+                eyebrow.GetComponent<LayoutElement>().preferredWidth = 96f;
+
+                GameObject rule = new GameObject("Rule");
+                rule.transform.SetParent(eyebrowRow.transform, worldPositionStays: false);
+                rule.AddComponent<RectTransform>();
+                LayoutElement ruleLe = rule.AddComponent<LayoutElement>();
+                ruleLe.flexibleWidth = 1f;
+                ruleLe.preferredHeight = 1f;
+                ruleLe.minHeight = 1f;
+                Image ruleImg = rule.AddComponent<Image>();
+                ruleImg.color = LineSoft;
+                ruleImg.raycastTarget = false;
 
                 // --- แถวบน: cover art + ชื่อเพลง/ศิลปิน ---
                 GameObject headerRow = new GameObject("HeaderRow");
@@ -130,7 +165,8 @@ namespace ChillWithYou_SpotifyMod
                 coverLe.preferredWidth = 64f;
                 coverLe.preferredHeight = 64f;
                 _coverImage = coverGo.AddComponent<Image>();
-                _coverImage.color = new Color(0.3f, 0.3f, 0.3f, 1f); // placeholder เทาๆ จนกว่าจะโหลดปกอัลบั้มจริง
+                _coverImage.color = new Color(0.16f, 0.15f, 0.20f, 1f); // placeholder เข้มๆ จนกว่าจะโหลดปกอัลบั้มจริง
+                AddCoverFrame(coverGo.transform, LineColor);
 
                 GameObject textCol = new GameObject("TextCol");
                 textCol.transform.SetParent(headerRow.transform, worldPositionStays: false);
@@ -146,8 +182,9 @@ namespace ChillWithYou_SpotifyMod
                 textColVlg.spacing = 2f;
 
                 _trackTitleText = CreateText(textCol.transform, "Connect Spotify and play a song on any device to see controls", 14, TextAnchor.MiddleLeft);
+                _trackTitleText.fontStyle = FontStyle.Bold;
                 _artistText = CreateText(textCol.transform, "", 12, TextAnchor.MiddleLeft);
-                _artistText.color = new Color(0.7f, 0.7f, 0.7f, 1f);
+                _artistText.color = TextSecondary;
 
                 // --- Progress bar + เวลา ---
                 GameObject progressRow = new GameObject("ProgressRow");
@@ -173,23 +210,24 @@ namespace ChillWithYou_SpotifyMod
                 _controlsRow = new GameObject("ControlsRow");
                 _controlsRow.transform.SetParent(_spotifySection.transform, worldPositionStays: false);
                 RectTransform crRt = _controlsRow.AddComponent<RectTransform>();
-                crRt.sizeDelta = new Vector2(0f, 36f);
+                crRt.sizeDelta = new Vector2(0f, 50f);
                 LayoutElement crLe = _controlsRow.AddComponent<LayoutElement>();
-                crLe.preferredHeight = 36f;
-                crLe.minHeight = 36f;
+                crLe.preferredHeight = 50f;
+                crLe.minHeight = 50f;
 
                 HorizontalLayoutGroup hlg = _controlsRow.AddComponent<HorizontalLayoutGroup>();
-                hlg.childForceExpandWidth = true;
-                hlg.childForceExpandHeight = true;
+                hlg.childForceExpandWidth = false;
+                hlg.childForceExpandHeight = false;
                 hlg.childControlWidth = true;
                 hlg.childControlHeight = true;
-                hlg.spacing = 6f;
+                hlg.spacing = 22f;
                 hlg.childAlignment = TextAnchor.MiddleCenter;
 
-                Button prevBtn = CreateControlButton(_controlsRow.transform, "<<");
-                Button playPauseBtn = CreateControlButton(_controlsRow.transform, "||");
+                // motif เดียวกับ transport ของเกม: ปุ่มข้างเป็นวงแหวน ปุ่มกลาง (play/pause) วงกลมขาวทึบ
+                Button prevBtn = CreateCircleButton(_controlsRow.transform, "<<", 36f, solid: false);
+                Button playPauseBtn = CreateCircleButton(_controlsRow.transform, "||", 46f, solid: true);
                 _playPauseLabel = playPauseBtn.GetComponentInChildren<Text>();
-                Button nextBtn = CreateControlButton(_controlsRow.transform, ">>");
+                Button nextBtn = CreateCircleButton(_controlsRow.transform, ">>", 36f, solid: false);
 
                 prevBtn.onClick.AddListener(() => SafeFireAndForget(OnPrevClicked()));
                 playPauseBtn.onClick.AddListener(() => SafeFireAndForget(OnPlayPauseClicked()));
@@ -205,14 +243,15 @@ namespace ChillWithYou_SpotifyMod
                 _connectRow.transform.SetParent(_spotifySection.transform, worldPositionStays: false);
                 _connectRow.AddComponent<RectTransform>();
                 LayoutElement connectLe = _connectRow.AddComponent<LayoutElement>();
-                connectLe.preferredHeight = 32f;
-                connectLe.minHeight = 32f;
+                connectLe.preferredHeight = 38f;
+                connectLe.minHeight = 38f;
                 VerticalLayoutGroup connectVlg = _connectRow.AddComponent<VerticalLayoutGroup>();
                 connectVlg.childForceExpandWidth = true;
                 connectVlg.childControlWidth = true;
                 connectVlg.childControlHeight = true;
 
-                Button connectBtn = CreateTextButton(_connectRow.transform, "Connect Spotify", ButtonActive, ButtonPressed);
+                // ปุ่มเขียว pill ตัวหนังสือเข้ม = ภาษาปุ่ม login มาตรฐานของ Spotify ที่ user จำได้
+                Button connectBtn = CreatePillButton(_connectRow.transform, "Connect Spotify", filled: true, ButtonActive, height: 34f);
                 connectBtn.onClick.AddListener(OnConnectClicked);
 
                 // --- Playlist header: ปก + ชื่อ playlist ที่กำลังเล่นอยู่ (ต้อง login แล้วเท่านั้น) ---
@@ -237,20 +276,30 @@ namespace ChillWithYou_SpotifyMod
                 plCoverLe.preferredWidth = 48f;
                 plCoverLe.preferredHeight = 48f;
                 _playlistImage = plCoverGo.AddComponent<Image>();
-                _playlistImage.color = new Color(0.3f, 0.3f, 0.3f, 1f);
+                _playlistImage.color = new Color(0.16f, 0.15f, 0.20f, 1f);
+                AddCoverFrame(plCoverGo.transform, LineSoft);
 
-                _playlistNameText = CreateText(_playlistHeader.transform, "-", 13, TextAnchor.MiddleLeft);
-                LayoutElement plNameLe = _playlistNameText.gameObject.AddComponent<LayoutElement>();
-                plNameLe.flexibleWidth = 1f;
+                GameObject plNameCol = new GameObject("NameCol");
+                plNameCol.transform.SetParent(_playlistHeader.transform, worldPositionStays: false);
+                plNameCol.AddComponent<RectTransform>();
+                LayoutElement plNameColLe = plNameCol.AddComponent<LayoutElement>();
+                plNameColLe.flexibleWidth = 1f;
+                VerticalLayoutGroup plNameVlg = plNameCol.AddComponent<VerticalLayoutGroup>();
+                plNameVlg.childControlWidth = true;
+                plNameVlg.childControlHeight = true;
+                plNameVlg.childForceExpandWidth = true;
+                plNameVlg.childAlignment = TextAnchor.MiddleLeft;
+                plNameVlg.spacing = 1f;
+
+                _playlistNameText = CreateText(plNameCol.transform, "-", 13, TextAnchor.MiddleLeft);
+                _playlistNameText.fontStyle = FontStyle.Bold;
+                _playlistSubText = CreateText(plNameCol.transform, "PLAYING FROM PLAYLIST", 9, TextAnchor.MiddleLeft);
+                _playlistSubText.color = TextFaint;
 
                 // ปุ่ม refresh คิวเพลง (คิวเดินหน้าไปเรื่อยๆ ระหว่างฟัง กดนี้เพื่อดึง snapshot ล่าสุด)
-                Button refreshBtn = CreateTextButton(_playlistHeader.transform, "↻", ButtonNormal, ButtonPressed);
-                LayoutElement refreshLe = refreshBtn.gameObject.AddComponent<LayoutElement>();
-                refreshLe.preferredWidth = 48f;
-                refreshLe.minWidth = 32f;
-                refreshLe.preferredHeight = 48f;
+                Button refreshBtn = CreateCircleButton(_playlistHeader.transform, "↻", 30f, solid: false, ringColor: LineSoft);
                 Text refreshLabel = refreshBtn.GetComponentInChildren<Text>();
-                if (refreshLabel != null) refreshLabel.fontSize = 24; // ตัว ↻ default 13 เล็กเกินไปสำหรับปุ่ม 48px
+                if (refreshLabel != null) { refreshLabel.fontSize = 15; refreshLabel.color = TextSecondary; }
                 refreshBtn.onClick.AddListener(() => SafeFireAndForget(ForceRefreshQueue()));
 
                 // --- Playlist track list ---
@@ -282,17 +331,17 @@ namespace ChillWithYou_SpotifyMod
                 _searchInput = CreateSearchInputField(_searchRow.transform); // flexibleWidth=1 อยู่แล้ว -> ขยายเต็มพื้นที่ที่เหลือ
 
                 // ปุ่มต้องมี preferredWidth ตายตัว ไม่งั้น HLG จะบีบจนหายไป
-                Button searchBtn = CreateTextButton(_searchRow.transform, "Search", ButtonActive, ButtonPressed);
-                LayoutElement searchBtnLe = searchBtn.gameObject.AddComponent<LayoutElement>();
-                searchBtnLe.preferredWidth = 56f;
-                searchBtnLe.minWidth = 56f;
+                Button searchBtn = CreatePillButton(_searchRow.transform, "Search", filled: false, ButtonActive);
+                LayoutElement searchBtnLe = searchBtn.GetComponent<LayoutElement>();
+                searchBtnLe.preferredWidth = 64f;
+                searchBtnLe.minWidth = 64f;
                 searchBtn.onClick.AddListener(() => SafeFireAndForget(OnSearchClicked()));
 
                 // ปุ่มเรียกดู playlist ของตัวเอง - แสดงผลในพื้นที่เดียวกับผลค้นหา
-                Button myListsBtn = CreateTextButton(_searchRow.transform, "My Lists", ButtonNormal, ButtonPressed);
-                LayoutElement myListsBtnLe = myListsBtn.gameObject.AddComponent<LayoutElement>();
-                myListsBtnLe.preferredWidth = 62f;
-                myListsBtnLe.minWidth = 62f;
+                Button myListsBtn = CreatePillButton(_searchRow.transform, "My Lists", filled: false, ButtonActive);
+                LayoutElement myListsBtnLe = myListsBtn.GetComponent<LayoutElement>();
+                myListsBtnLe.preferredWidth = 72f;
+                myListsBtnLe.minWidth = 72f;
                 myListsBtn.onClick.AddListener(() => SafeFireAndForget(OnMyPlaylistsClicked()));
                 _showingMyPlaylists = false; // UI ชุดใหม่เริ่มจาก list ว่างเสมอ กัน toggle ค้างจากรอบก่อน
 
@@ -475,12 +524,14 @@ namespace ChillWithYou_SpotifyMod
             {
                 // ไม่ได้เล่นจาก playlist อยู่ตอนนี้ (เช่น เล่นจาก album/liked songs) -> เคลียร์ของเก่าทิ้ง
                 if (_playlistNameText != null) _playlistNameText.text = "Not playing from a playlist";
+                if (_playlistSubText != null) _playlistSubText.gameObject.SetActive(false);
                 ClearChildren(_queueList.transform);
                 _queueRowTitles.Clear();
                 return;
             }
 
             if (_playlistNameText != null) _playlistNameText.text = playlist.Name ?? "-";
+            if (_playlistSubText != null) _playlistSubText.gameObject.SetActive(true);
 
             if (playlist.CoverImageBytes != null && playlist.CoverImageBytes.Length > 0)
             {
@@ -496,7 +547,7 @@ namespace ChillWithYou_SpotifyMod
             {
                 // ไม่มีปกมาด้วย -> รีเซ็ตกลับ placeholder กันภาพปกของ playlist ก่อนหน้าค้างแสดงผิดอัน
                 _playlistImage.sprite = null;
-                _playlistImage.color = new Color(0.3f, 0.3f, 0.3f, 1f);
+                _playlistImage.color = new Color(0.16f, 0.15f, 0.20f, 1f);
             }
 
             ClearChildren(_queueList.transform);
@@ -509,7 +560,7 @@ namespace ChillWithYou_SpotifyMod
             {
                 // โหลดรายชื่อเพลงไม่ได้ (เช่น Daily Mix / Discover Weekly ที่ Spotify ปิด API access ไปแล้ว)
                 Text msg = CreateText(_queueList.transform, "Track list not available for this playlist", 11, TextAnchor.MiddleLeft);
-                msg.color = new Color(0.55f, 0.55f, 0.55f, 1f);
+                msg.color = TextFaint;
                 return;
             }
 
@@ -534,6 +585,8 @@ namespace ChillWithYou_SpotifyMod
                 if (!string.IsNullOrEmpty(capturedTrackId))
                 {
                     Image rowBg = row.AddComponent<Image>();
+                    rowBg.sprite = UiSprites.Rounded; // hover เป็นแถบมุมโค้งแบบแถวรายการของเกม
+                    rowBg.type = Image.Type.Sliced;
                     rowBg.color = new Color(0f, 0f, 0f, 0f);
                     Button rowBtn = row.AddComponent<Button>();
                     ColorBlock cb = rowBtn.colors;
@@ -559,7 +612,7 @@ namespace ChillWithYou_SpotifyMod
 
                 Text nameText = CreateText(nameCol.transform, t.Title ?? "-", 12, TextAnchor.MiddleLeft);
                 Text artistText = CreateText(nameCol.transform, t.Artist ?? "-", 10, TextAnchor.MiddleLeft);
-                artistText.color = new Color(0.7f, 0.7f, 0.7f, 1f);
+                artistText.color = TextFaint;
 
                 if (!string.IsNullOrEmpty(capturedTrackId))
                     _queueRowTitles.Add((capturedTrackId, nameText));
@@ -754,23 +807,30 @@ namespace ChillWithYou_SpotifyMod
             slider.interactable = false; // แค่แสดงผล ไม่ให้ user ลากเปลี่ยนตำแหน่งเพลง (Spotify API ตัวนี้ยังไม่รองรับ seek)
             slider.transition = Selectable.Transition.None;
 
+            // แถบจริงสูง 6px หัวท้ายมน วางกึ่งกลางแนวตั้งของพื้นที่ slider
             GameObject bgGo = new GameObject("Background");
             bgGo.transform.SetParent(go.transform, worldPositionStays: false);
             RectTransform bgRt = bgGo.AddComponent<RectTransform>();
-            bgRt.anchorMin = Vector2.zero; bgRt.anchorMax = Vector2.one; bgRt.sizeDelta = Vector2.zero;
+            bgRt.anchorMin = new Vector2(0f, 0.5f); bgRt.anchorMax = new Vector2(1f, 0.5f);
+            bgRt.sizeDelta = new Vector2(0f, 6f);
             Image bgImg = bgGo.AddComponent<Image>();
-            bgImg.color = ButtonNormal;
+            bgImg.sprite = UiSprites.Bar;
+            bgImg.type = Image.Type.Sliced;
+            bgImg.color = new Color(1f, 1f, 1f, 0.22f);
 
             GameObject fillArea = new GameObject("FillArea");
             fillArea.transform.SetParent(go.transform, worldPositionStays: false);
             RectTransform fillAreaRt = fillArea.AddComponent<RectTransform>();
-            fillAreaRt.anchorMin = Vector2.zero; fillAreaRt.anchorMax = Vector2.one; fillAreaRt.sizeDelta = Vector2.zero;
+            fillAreaRt.anchorMin = new Vector2(0f, 0.5f); fillAreaRt.anchorMax = new Vector2(1f, 0.5f);
+            fillAreaRt.sizeDelta = new Vector2(0f, 6f);
 
             GameObject fillGo = new GameObject("Fill");
             fillGo.transform.SetParent(fillArea.transform, worldPositionStays: false);
             RectTransform fillRt = fillGo.AddComponent<RectTransform>();
             fillRt.anchorMin = new Vector2(0f, 0f); fillRt.anchorMax = new Vector2(0f, 1f); fillRt.sizeDelta = new Vector2(10f, 0f);
             Image fillImg = fillGo.AddComponent<Image>();
+            fillImg.sprite = UiSprites.Bar;
+            fillImg.type = Image.Type.Sliced;
             fillImg.color = ButtonActive;
 
             slider.fillRect = fillRt;
@@ -793,32 +853,55 @@ namespace ChillWithYou_SpotifyMod
             text.text = content;
             text.fontSize = 11;
             text.alignment = TextAnchor.MiddleCenter;
-            text.color = new Color(0.7f, 0.7f, 0.7f, 1f);
+            text.color = TextSecondary;
             text.font = _arialFont;
             text.raycastTarget = false;
             return text;
         }
 
-        private static Button CreateControlButton(Transform parent, string label)
+        // ปุ่มวงกลมภาษาเดียวกับปุ่มไอคอนของเกม:
+        // solid = วงกลมขาวทึบ + glyph เข้ม (ปุ่มหลักอย่าง play/pause กลาง transport)
+        // ไม่ solid = วงแหวนขอบขาว พื้นใส ชี้/กดแล้วมีวงกลมขาวจางโผล่ข้างใน
+        private static Button CreateCircleButton(Transform parent, string label, float size, bool solid, Color? ringColor = null)
         {
             GameObject go = new GameObject("Btn_" + label);
             go.transform.SetParent(parent, worldPositionStays: false);
             go.AddComponent<RectTransform>();
-
-            Image img = go.AddComponent<Image>();
-            img.color = ButtonNormal;
-
             LayoutElement le = go.AddComponent<LayoutElement>();
-            le.preferredHeight = 32f;
-            le.flexibleWidth = 1f;
+            le.preferredWidth = size; le.minWidth = size;
+            le.preferredHeight = size; le.minHeight = size;
+
+            Image shape = go.AddComponent<Image>();
+            shape.sprite = solid ? UiSprites.Circle : UiSprites.Ring;
+            shape.preserveAspect = true;
+            shape.color = solid ? Color.white : (ringColor ?? LineColor);
 
             Button btn = go.AddComponent<Button>();
-            btn.targetGraphic = img;
-            ColorBlock colors = btn.colors;
-            colors.normalColor = ButtonNormal;
-            colors.highlightedColor = ButtonHighlight;
-            colors.pressedColor = ButtonPressed;
-            btn.colors = colors;
+            ColorBlock cb = btn.colors;
+            if (solid)
+            {
+                btn.targetGraphic = shape;
+                cb.normalColor = Color.white;
+                cb.highlightedColor = new Color(0.92f, 0.92f, 0.92f, 1f);
+                cb.pressedColor = new Color(0.78f, 0.78f, 0.78f, 1f);
+            }
+            else
+            {
+                // วงแหวนคงที่ตลอด feedback มาจากวงกลม fill ข้างในที่โผล่ตอนชี้/กด
+                GameObject pressGo = new GameObject("PressFill");
+                pressGo.transform.SetParent(go.transform, worldPositionStays: false);
+                RectTransform pressRt = pressGo.AddComponent<RectTransform>();
+                pressRt.anchorMin = Vector2.zero; pressRt.anchorMax = Vector2.one; pressRt.sizeDelta = Vector2.zero;
+                Image press = pressGo.AddComponent<Image>();
+                press.sprite = UiSprites.Circle;
+                press.preserveAspect = true;
+                press.raycastTarget = false;
+                btn.targetGraphic = press;
+                cb.normalColor = new Color(1f, 1f, 1f, 0f);
+                cb.highlightedColor = HoverFill;
+                cb.pressedColor = PressFill;
+            }
+            btn.colors = cb;
 
             GameObject labelGo = new GameObject("Label");
             labelGo.transform.SetParent(go.transform, worldPositionStays: false);
@@ -829,35 +912,58 @@ namespace ChillWithYou_SpotifyMod
 
             Text text = labelGo.AddComponent<Text>();
             text.text = label;
-            text.fontSize = 16;
+            text.fontSize = Mathf.RoundToInt(size * 0.36f);
+            text.fontStyle = FontStyle.Bold;
             text.alignment = TextAnchor.MiddleCenter;
-            text.color = Color.white;
+            text.color = solid ? new Color(0.05f, 0.05f, 0.09f, 1f) : Color.white;
             text.font = _arialFont;
             text.raycastTarget = false;
 
             return btn;
         }
 
-        private static Button CreateTextButton(Transform parent, string label, Color normal, Color pressed)
+        // ปุ่ม pill ตามภาษาเกม: filled = พื้นทึบสี accent + ตัวหนังสือเข้ม (ปุ่มหลัก เช่น Connect เขียว Spotify)
+        // outline = ขอบขาวพื้นใส + ตัวหนังสือขาว (ปุ่มรอง เช่น Search / My Lists)
+        private static Button CreatePillButton(Transform parent, string label, bool filled, Color accent, float height = 30f)
         {
             GameObject go = new GameObject("Btn_" + label);
             go.transform.SetParent(parent, worldPositionStays: false);
             go.AddComponent<RectTransform>();
+            LayoutElement le = go.AddComponent<LayoutElement>();
+            le.preferredHeight = height;
+            le.minHeight = height;
 
             Image img = go.AddComponent<Image>();
-            img.color = normal;
-
-            LayoutElement le = go.AddComponent<LayoutElement>();
-            le.preferredHeight = 32f;
+            img.sprite = filled ? UiSprites.Pill : UiSprites.PillOutline;
+            img.type = Image.Type.Sliced;
+            img.color = filled ? accent : LineColor;
 
             Button btn = go.AddComponent<Button>();
-            btn.targetGraphic = img;
-
-            ColorBlock colors = btn.colors;
-            colors.normalColor = normal;
-            colors.highlightedColor = normal;
-            colors.pressedColor = pressed;
-            btn.colors = colors;
+            ColorBlock cb = btn.colors;
+            if (filled)
+            {
+                // สีจริงมาจาก img.color แล้วโดน ColorBlock คูณทับ - ขาวล้วน = สีเดิม, เทา = เข้มลงตอนกด
+                btn.targetGraphic = img;
+                cb.normalColor = Color.white;
+                cb.highlightedColor = new Color(0.93f, 0.93f, 0.93f, 1f);
+                cb.pressedColor = new Color(0.75f, 0.75f, 0.75f, 1f);
+            }
+            else
+            {
+                GameObject pressGo = new GameObject("PressFill");
+                pressGo.transform.SetParent(go.transform, worldPositionStays: false);
+                RectTransform pressRt = pressGo.AddComponent<RectTransform>();
+                pressRt.anchorMin = Vector2.zero; pressRt.anchorMax = Vector2.one; pressRt.sizeDelta = Vector2.zero;
+                Image press = pressGo.AddComponent<Image>();
+                press.sprite = UiSprites.Pill;
+                press.type = Image.Type.Sliced;
+                press.raycastTarget = false;
+                btn.targetGraphic = press;
+                cb.normalColor = new Color(1f, 1f, 1f, 0f);
+                cb.highlightedColor = HoverFill;
+                cb.pressedColor = PressFill;
+            }
+            btn.colors = cb;
 
             GameObject labelGo = new GameObject("Label");
             labelGo.transform.SetParent(go.transform, worldPositionStays: false);
@@ -868,13 +974,52 @@ namespace ChillWithYou_SpotifyMod
 
             Text text = labelGo.AddComponent<Text>();
             text.text = label;
-            text.fontSize = 13;
+            text.fontSize = 12;
+            text.fontStyle = FontStyle.Bold;
             text.alignment = TextAnchor.MiddleCenter;
-            text.color = Color.white;
+            text.color = filled ? new Color(0.02f, 0.09f, 0.045f, 1f) : Color.white;
             text.font = _arialFont;
             text.raycastTarget = false;
 
             return btn;
+        }
+
+        // กรอบมุมโค้งทับบนปกอัลบั้ม/ปก playlist ให้เข้ากับกรอบขาวรอบองค์ประกอบของเกม
+        private static void AddCoverFrame(Transform cover, Color color)
+        {
+            GameObject frame = new GameObject("Frame");
+            frame.transform.SetParent(cover, worldPositionStays: false);
+            RectTransform rt = frame.AddComponent<RectTransform>();
+            rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one; rt.sizeDelta = Vector2.zero;
+            Image img = frame.AddComponent<Image>();
+            img.sprite = UiSprites.RoundedOutline;
+            img.type = Image.Type.Sliced;
+            img.color = color;
+            img.raycastTarget = false;
+        }
+
+        // พยายามใช้ฟอนต์ UI ของเกมเองให้ section กลมกลืน - หาไม่ได้ค่อย fallback เป็น Arial
+        // รับเฉพาะ dynamic font ที่มีตัวอักษรพื้นฐานครบ กันไปหยิบ icon font แล้วตัวหนังสือพัง
+        private static Font FindUiFont()
+        {
+            try
+            {
+                foreach (Font f in Resources.FindObjectsOfTypeAll<Font>())
+                {
+                    if (f == null || !f.dynamic) continue;
+                    string n = f.name.ToLowerInvariant();
+                    if (n.Contains("arial")) continue;
+                    if (!f.HasCharacter('A') || !f.HasCharacter('g') || !f.HasCharacter('0') || !f.HasCharacter(':'))
+                        continue;
+                    Plugin.Log.LogInfo($"[SpotifyPatches] ใช้ฟอนต์ของเกม: {f.name}");
+                    return f;
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"[SpotifyPatches] หาฟอนต์ของเกมไม่สำเร็จ: {ex.Message}");
+            }
+            return Resources.GetBuiltinResource<Font>("Arial.ttf");
         }
 
         private static async Task OnSearchClicked()
@@ -1145,7 +1290,7 @@ namespace ChillWithYou_SpotifyMod
         private static void CreateSectionLabel(Transform parent, string label)
         {
             Text t = CreateText(parent, label.ToUpper(), 10, TextAnchor.MiddleLeft);
-            t.color = new Color(0.5f, 0.5f, 0.5f, 1f);
+            t.color = TextFaint;
         }
 
         private static void BuildSearchRow(Transform parent, string title, string sub, string right, UnityEngine.Events.UnityAction onClick)
@@ -1168,6 +1313,8 @@ namespace ChillWithYou_SpotifyMod
             if (onClick != null)
             {
                 Image rowBg = row.AddComponent<Image>();
+                rowBg.sprite = UiSprites.Rounded;
+                rowBg.type = Image.Type.Sliced;
                 rowBg.color = new Color(0f, 0f, 0f, 0f);
                 Button rowBtn = row.AddComponent<Button>();
                 ColorBlock cb = rowBtn.colors;
@@ -1210,11 +1357,13 @@ namespace ChillWithYou_SpotifyMod
 
             LayoutElement le = go.AddComponent<LayoutElement>();
             le.flexibleWidth = 1f;
-            le.preferredHeight = 28f;
-            le.minHeight = 28f;
+            le.preferredHeight = 30f;
+            le.minHeight = 30f;
 
             Image bg = go.AddComponent<Image>();
-            bg.color = new Color(0.2f, 0.2f, 0.2f, 1f);
+            bg.sprite = UiSprites.Pill; // ช่องค้นหาทรง pill พื้นขาวจางแบบ input ของเกม
+            bg.type = Image.Type.Sliced;
+            bg.color = new Color(1f, 1f, 1f, 0.12f);
 
             // viewport กัน text ล้นขอบ
             GameObject viewport = new GameObject("Viewport");
@@ -1222,8 +1371,8 @@ namespace ChillWithYou_SpotifyMod
             RectTransform vpRt = viewport.AddComponent<RectTransform>();
             vpRt.anchorMin = Vector2.zero;
             vpRt.anchorMax = Vector2.one;
-            vpRt.offsetMin = new Vector2(6f, 2f);
-            vpRt.offsetMax = new Vector2(-6f, -2f);
+            vpRt.offsetMin = new Vector2(12f, 2f);
+            vpRt.offsetMax = new Vector2(-12f, -2f);
             viewport.AddComponent<RectMask2D>();
 
             // placeholder
@@ -1236,7 +1385,7 @@ namespace ChillWithYou_SpotifyMod
             Text placeholder = placeholderGo.AddComponent<Text>();
             placeholder.text = "Search songs, artists, albums…";
             placeholder.fontSize = 11;
-            placeholder.color = new Color(0.45f, 0.45f, 0.45f, 1f);
+            placeholder.color = TextFaint;
             placeholder.font = _arialFont;
             placeholder.alignment = TextAnchor.MiddleLeft;
             placeholder.raycastTarget = false;
