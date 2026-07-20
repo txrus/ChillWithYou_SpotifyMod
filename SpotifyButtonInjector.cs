@@ -583,16 +583,10 @@ namespace ChillWithYou_SpotifyMod
                 if (!string.IsNullOrEmpty(capturedTrackId))
                 {
                     Image rowBg = row.AddComponent<Image>();
-                    rowBg.sprite = UiSprites.Rounded; // hover เป็นแถบมุมโค้งแบบแถวรายการของเกม
-                    rowBg.type = Image.Type.Sliced;
-                    rowBg.color = Color.white; // alpha จริงมาจาก ColorBlock - ถ้าตั้ง alpha 0 ตรงนี้ tint จะโดนคูณจนมองไม่เห็น
+                    rowBg.color = new Color(0f, 0f, 0f, 0f); // โปร่งใส มีไว้รับคลิกให้ทั้งแถวเท่านั้น
                     Button rowBtn = row.AddComponent<Button>();
-                    ColorBlock cb = rowBtn.colors;
-                    cb.highlightedColor = new Color(1f, 1f, 1f, 0.08f);
-                    cb.pressedColor = new Color(1f, 1f, 1f, 0.15f);
-                    cb.normalColor = new Color(1f, 1f, 1f, 0f);
-                    cb.selectedColor = new Color(1f, 1f, 1f, 0f); // กันแถวติดสว่างค้างหลังกด (default 0.96)
-                    rowBtn.colors = cb;
+                    // แถวเพลงไม่มี effect ตอนชี้/กดเลย - ชื่อเพลงเปลี่ยนเป็นสีเขียวตอนเริ่มเล่นคือ feedback อยู่แล้ว
+                    rowBtn.transition = Selectable.Transition.None;
                     rowBtn.targetGraphic = rowBg;
                     rowBtn.onClick.AddListener(() => SafeFireAndForget(PlayTrackInPlaylist(capturedContextUri, capturedTrackId)));
                 }
@@ -887,7 +881,7 @@ namespace ChillWithYou_SpotifyMod
             }
             else
             {
-                // วงแหวนคงที่ตลอด feedback เป็นวงกลมสีเข้มจางๆ โผล่ข้างใน (ใช้สีเข้มเพื่อไม่ให้กลืน glyph ขาว)
+                // วงแหวนคงที่ตลอด ตอนกดมีวงกลมขาววาบขึ้นหนึ่งจังหวะแล้วดับ (selected โปร่งใส เลยไม่ติดค้าง)
                 GameObject pressGo = new GameObject("PressFill");
                 pressGo.transform.SetParent(go.transform, worldPositionStays: false);
                 RectTransform pressRt = pressGo.AddComponent<RectTransform>();
@@ -896,11 +890,10 @@ namespace ChillWithYou_SpotifyMod
                 press.sprite = UiSprites.Circle;
                 press.preserveAspect = true;
                 press.raycastTarget = false;
-                press.color = Color.black; // tint จาก ColorBlock คุมแค่ alpha - ตัว fill เป็นสีเข้มเสมอ
                 btn.targetGraphic = press;
                 cb.normalColor = new Color(1f, 1f, 1f, 0f);
-                cb.highlightedColor = new Color(1f, 1f, 1f, 0.15f);
-                cb.pressedColor = new Color(1f, 1f, 1f, 0.35f);
+                cb.highlightedColor = new Color(1f, 1f, 1f, 0.10f);
+                cb.pressedColor = new Color(1f, 1f, 1f, 0.45f); // แสงวาบยืนยันว่ากดติด
                 cb.selectedColor = new Color(1f, 1f, 1f, 0f); // กลับหายทันทีหลังปล่อย ไม่ติดค้าง
             }
             btn.colors = cb;
@@ -961,11 +954,10 @@ namespace ChillWithYou_SpotifyMod
                 press.sprite = UiSprites.Pill;
                 press.type = Image.Type.Sliced;
                 press.raycastTarget = false;
-                press.color = Color.black; // fill สีเข้ม กันกลืนตัวหนังสือขาวตอนกด
                 btn.targetGraphic = press;
                 cb.normalColor = new Color(1f, 1f, 1f, 0f);
-                cb.highlightedColor = new Color(1f, 1f, 1f, 0.15f);
-                cb.pressedColor = new Color(1f, 1f, 1f, 0.35f);
+                cb.highlightedColor = new Color(1f, 1f, 1f, 0.10f);
+                cb.pressedColor = new Color(1f, 1f, 1f, 0.45f); // แสงวาบยืนยันว่ากดติด
                 cb.selectedColor = new Color(1f, 1f, 1f, 0f);
             }
             btn.colors = cb;
@@ -1304,16 +1296,10 @@ namespace ChillWithYou_SpotifyMod
             if (onClick != null)
             {
                 Image rowBg = row.AddComponent<Image>();
-                rowBg.sprite = UiSprites.Rounded;
-                rowBg.type = Image.Type.Sliced;
-                rowBg.color = Color.white; // alpha จริงมาจาก ColorBlock
+                rowBg.color = new Color(0f, 0f, 0f, 0f); // โปร่งใส มีไว้รับคลิกให้ทั้งแถวเท่านั้น
                 Button rowBtn = row.AddComponent<Button>();
-                ColorBlock cb = rowBtn.colors;
-                cb.highlightedColor = new Color(1f, 1f, 1f, 0.08f);
-                cb.pressedColor = new Color(1f, 1f, 1f, 0.15f);
-                cb.normalColor = new Color(1f, 1f, 1f, 0f);
-                cb.selectedColor = new Color(1f, 1f, 1f, 0f); // กันแถวติดสว่างค้างหลังกด
-                rowBtn.colors = cb;
+                // แถวผลค้นหาไม่มี effect ตอนชี้/กด เหมือนแถวคิวเพลง
+                rowBtn.transition = Selectable.Transition.None;
                 rowBtn.targetGraphic = rowBg;
                 rowBtn.onClick.AddListener(onClick);
             }
