@@ -34,6 +34,10 @@ namespace ChillWithYou_SpotifyMod
         private static string _lastKnownDeviceId;
         public static string LastKnownDeviceId => _lastKnownDeviceId;
 
+        // cache ปกอัลบั้มตาม URL - refresh รอบใหม่ที่เพลง/ปกเดิมไม่ต้องโหลดรูปซ้ำ
+        private static string _lastCoverUrl;
+        private static byte[] _lastCoverBytes;
+
         // เปิดให้ SpotifyButtonsInjector เรียกใช้ตอนสั่ง play track/context จาก search results โดยตรง
         public static async Task SendPlayBody(string path, string jsonBody)
             => await SendAsync(HttpMethod.Put, path, jsonBody);
@@ -54,16 +58,17 @@ namespace ChillWithYou_SpotifyMod
             }
         }
 
-        public static async Task PlayPause(bool isCurrentlyPlaying)
+        // คืน true เมื่อ Spotify รับคำสั่งจริง เพื่อให้ UI สลับสถานะเองได้โดยไม่ต้องยิง GET ตามหลัง
+        public static async Task<bool> PlayPause(bool isCurrentlyPlaying)
         {
-            if (!await EnsureValidTokenAsync()) { Plugin.Log.LogWarning("[SpotifyApi] Not logged in"); return; }
+            if (!await EnsureValidTokenAsync()) { Plugin.Log.LogWarning("[SpotifyApi] Not logged in"); return false; }
 
             string endpoint = isCurrentlyPlaying ? "pause" : "play";
             string path = $"me/player/{endpoint}";
             if (!string.IsNullOrEmpty(_lastKnownDeviceId))
                 path += $"?device_id={_lastKnownDeviceId}";
 
-            await SendAsync(HttpMethod.Put, path, jsonBody: "{}");
+            return await SendAsync(HttpMethod.Put, path, jsonBody: "{}");
         }
 
         public static async Task Next()
@@ -184,8 +189,20 @@ namespace ChillWithYou_SpotifyMod
                     coverUrl = coverImages[0]?.Value<string>("url");
                 if (!string.IsNullOrEmpty(coverUrl))
                 {
-                    try { thumbBytes = await Http.GetByteArrayAsync(coverUrl); }
-                    catch (Exception ex) { Plugin.Log.LogWarning($"[SpotifyApi] Cover download failed: {ex.Message}"); }
+                    if (coverUrl == _lastCoverUrl && _lastCoverBytes != null)
+                    {
+                        thumbBytes = _lastCoverBytes; // ปกเดิม ใช้ของที่โหลดไว้แล้ว
+                    }
+                    else
+                    {
+                        try
+                        {
+                            thumbBytes = await Http.GetByteArrayAsync(coverUrl);
+                            _lastCoverUrl = coverUrl;
+                            _lastCoverBytes = thumbBytes;
+                        }
+                        catch (Exception ex) { Plugin.Log.LogWarning($"[SpotifyApi] Cover download failed: {ex.Message}"); }
+                    }
                 }
 
                 // เอา playlist id มาจาก context.uri ของ response นี้เลย (ถ้าเล่นจาก playlist อยู่)
@@ -215,12 +232,13 @@ namespace ChillWithYou_SpotifyMod
             }
         }
 
-        private static async Task SendAsync(HttpMethod method, string path, string jsonBody = null)
+        // คืน true เฉพาะตอน Spotify ตอบ 2xx - ผู้เรียกส่วนใหญ่ไม่สนผลลัพธ์ ยกเว้น PlayPause
+        private static async Task<bool> SendAsync(HttpMethod method, string path, string jsonBody = null)
         {
             if (SpotifyRateLimiter.IsBlocked)
             {
                 Plugin.Log.LogInfo($"[SpotifyApi] ข้าม {method} {path}: ยังโดน rate limit อยู่อีก {SpotifyRateLimiter.RemainingBlock.TotalSeconds:F0} วิ");
-                return;
+                return false;
             }
 
             try
@@ -236,18 +254,22 @@ namespace ChillWithYou_SpotifyMod
                 if (resp.StatusCode == (HttpStatusCode)429)
                 {
                     SpotifyRateLimiter.ReportTooManyRequests(resp);
-                    return;
+                    return false;
                 }
 
                 if (!resp.IsSuccessStatusCode)
                 {
                     string body = await resp.Content.ReadAsStringAsync();
                     Plugin.Log.LogWarning($"[SpotifyApi] {method} {path} failed: {resp.StatusCode} - {body}");
+                    return false;
                 }
+
+                return true;
             }
             catch (Exception ex)
             {
                 Plugin.Log.LogError($"[SpotifyApi] {method} {path} exception: {ex}");
+                return false;
             }
         }
     }

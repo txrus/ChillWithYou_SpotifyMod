@@ -42,6 +42,12 @@ namespace ChillWithYou_SpotifyMod
 
         private static bool _lastKnownIsPlaying;
 
+        // จำ bytes ของปกที่แสดงอยู่ (reference เดิมจาก cache ฝั่ง SpotifyApi) กันสร้าง Texture2D ซ้ำทุกรอบ refresh
+        private static byte[] _lastAppliedCoverBytes;
+
+        // ใช้ตัวเดียวร่วมกันทั้ง class - สร้าง HttpClient ใหม่ทุก request จะสะสม socket ค้าง
+        private static readonly System.Net.Http.HttpClient Http = new System.Net.Http.HttpClient();
+
         // สำหรับ interpolate progress bar เองระหว่างรอบ poll จริง (ไม่ต้องยิง API ถี่ขึ้น)
         private static TimeSpan _syncedPosition;
         private static TimeSpan _syncedDuration;
@@ -367,9 +373,33 @@ namespace ChillWithYou_SpotifyMod
 
         private static async Task OnPlayPauseClicked()
         {
-            await SpotifyApi.PlayPause(_lastKnownIsPlaying);
+            bool targetIsPlaying = !_lastKnownIsPlaying;
+            bool ok = await SpotifyApi.PlayPause(_lastKnownIsPlaying);
+
+            // สั่งสำเร็จ + มีข้อมูลเพลงอยู่แล้ว -> ไม่ต้องยิง GET ตามหลัง เพราะสิ่งเดียวที่เปลี่ยนคือ is_playing
+            // ซึ่งรู้ผลอยู่แล้ว แค่สลับสถานะในเครื่องพอ (ถ้าสั่งพลาด เช่น state ไม่ตรงกับเครื่องอื่น ค่อย resync)
+            if (ok && _isInterpolating)
+            {
+                Plugin.RunOnMainThread(() => ApplyLocalPlayPause(targetIsPlaying));
+                return;
+            }
+
             await Task.Delay(300);
             await RefreshNowPlaying();
+        }
+
+        // สลับ play/pause ในเครื่อง: ตรึงตำแหน่งเพลง ณ ตอนนี้เป็นจุด anchor ใหม่ให้ Tick() นับต่อ/หยุดนับ
+        private static void ApplyLocalPlayPause(bool nowPlaying)
+        {
+            if (_lastKnownIsPlaying)
+            {
+                TimeSpan pos = _syncedPosition + (DateTime.UtcNow - _syncedAtUtc);
+                if (_syncedDuration > TimeSpan.Zero && pos > _syncedDuration) pos = _syncedDuration;
+                _syncedPosition = pos;
+            }
+            _syncedAtUtc = DateTime.UtcNow;
+            _lastKnownIsPlaying = nowPlaying;
+            if (_playPauseLabel != null) _playPauseLabel.text = nowPlaying ? "||" : ">";
         }
 
         private static async Task OnNextClicked()
@@ -624,7 +654,10 @@ namespace ChillWithYou_SpotifyMod
             if (_playPauseLabel != null) _playPauseLabel.text = info.IsPlaying ? "||" : ">";
 
             // โหลด cover art ก็ต้องอยู่บน main thread ด้วย (สร้าง Texture2D ใหม่)
-            if (info.ThumbnailBytes != null && info.ThumbnailBytes.Length > 0)
+            // ข้ามได้เมื่อเป็น bytes ชุดเดิม (reference เดิมจาก cache) และปกยังแสดงอยู่บนจอ
+            if (info.ThumbnailBytes != null && info.ThumbnailBytes.Length > 0
+                && (!ReferenceEquals(info.ThumbnailBytes, _lastAppliedCoverBytes)
+                    || _coverImage == null || _coverImage.sprite == null))
             {
                 Texture2D tex = new Texture2D(2, 2);
                 if (tex.LoadImage(info.ThumbnailBytes))
@@ -634,6 +667,7 @@ namespace ChillWithYou_SpotifyMod
                     {
                         _coverImage.sprite = sprite;
                         _coverImage.color = Color.white; // ล้าง tint เทาของ placeholder ไม่งั้นรูปโดนคูณสีจนคล้ำ
+                        _lastAppliedCoverBytes = info.ThumbnailBytes;
                     }
                 }
             }
@@ -981,7 +1015,7 @@ namespace ChillWithYou_SpotifyMod
                     System.Net.Http.HttpMethod.Get,
                     $"https://api.spotify.com/v1/albums/{albumId}/tracks?limit=20");
                 request.Headers.Add("Authorization", $"Bearer {SpotifyAuth.AccessToken}");
-                var resp = await new System.Net.Http.HttpClient().SendAsync(request);
+                var resp = await Http.SendAsync(request);
                 if (!resp.IsSuccessStatusCode) return;
 
                 string json = await resp.Content.ReadAsStringAsync();
@@ -1011,7 +1045,7 @@ namespace ChillWithYou_SpotifyMod
                 byte[] coverBytes = null;
                 if (!string.IsNullOrEmpty(coverUrl))
                 {
-                    try { coverBytes = await new System.Net.Http.HttpClient().GetByteArrayAsync(coverUrl); }
+                    try { coverBytes = await Http.GetByteArrayAsync(coverUrl); }
                     catch (Exception ex) { Plugin.Log.LogWarning($"[SpotifyPatches] โหลดปกอัลบั้มพลาด: {ex.Message}"); }
                 }
 
