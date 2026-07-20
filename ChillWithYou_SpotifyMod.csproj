@@ -1,0 +1,70 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<!-- ตั้งค่า GameDir ส่วนตัวได้ในไฟล์ GameDir.props (ไม่ถูก commit) -->
+	<Import Project="GameDir.props" Condition="Exists('GameDir.props')" />
+
+	<PropertyGroup>
+		<TargetFramework>netstandard2.1</TargetFramework>
+		<AssemblyName>ChillWithYou_SpotifyMod</AssemblyName>
+		<RootNamespace>ChillWithYou_SpotifyMod</RootNamespace>
+		<LangVersion>latest</LangVersion>
+		<CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+
+		<!-- Path ไปยังโฟลเดอร์เกม — override ได้ด้วย GameDir.props หรือ -p:GameDir="..." -->
+		<GameDir Condition="'$(GameDir)' == ''">F:\Program Files (x86)\Steam\steamapps\common\Chill with You Lo-Fi Story</GameDir>
+		<GameManaged>$(GameDir)\Chill With You_Data\Managed</GameManaged>
+		<BepInExCore>$(GameDir)\BepInEx\core</BepInExCore>
+	</PropertyGroup>
+
+	<ItemGroup>
+	  <Compile Remove="_archive\**" />
+	  <EmbeddedResource Remove="_archive\**" />
+	  <None Remove="_archive\**" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Reference Include="Assembly-CSharp">
+			<HintPath>$(GameManaged)\Assembly-CSharp.dll</HintPath>
+		</Reference>
+		<Reference Include="0Harmony">
+			<HintPath>$(BepInExCore)\0Harmony.dll</HintPath>
+		</Reference>
+		<Reference Include="BepInEx">
+			<HintPath>$(BepInExCore)\BepInEx.dll</HintPath>
+		</Reference>
+		<Reference Include="Newtonsoft.Json">
+		  <HintPath>$(GameManaged)\Newtonsoft.Json.dll</HintPath>
+		</Reference>
+		<Reference Include="UnityEngine">
+			<HintPath>$(GameManaged)\UnityEngine.dll</HintPath>
+		</Reference>
+		<Reference Include="UnityEngine.CoreModule">
+			<HintPath>$(GameManaged)\UnityEngine.CoreModule.dll</HintPath>
+		</Reference>
+		<Reference Include="UnityEngine.ImageConversionModule">
+		  <HintPath>$(GameManaged)\UnityEngine.ImageConversionModule.dll</HintPath>
+		</Reference>
+		<Reference Include="UnityEngine.TextRenderingModule">
+		  <HintPath>$(GameManaged)\UnityEngine.TextRenderingModule.dll</HintPath>
+		</Reference>
+		<Reference Include="UnityEngine.UI">
+		  <HintPath>$(GameManaged)\UnityEngine.UI.dll</HintPath>
+		</Reference>
+		<Reference Include="UnityEngine.UIModule">
+		  <HintPath>$(GameManaged)\UnityEngine.UIModule.dll</HintPath>
+		</Reference>
+		<Reference Include="UnityEngine.InputLegacyModule">
+		  <HintPath>$(GameManaged)\UnityEngine.InputLegacyModule.dll</HintPath>
+		</Reference>
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.10" />
+	</ItemGroup>
+
+	<!-- Copy DLL เข้าโฟลเดอร์ plugins ของเกมหลัง build (เฉพาะเมื่อโฟลเดอร์มีอยู่จริง) -->
+	<Target Name="PostBuild" AfterTargets="Build" Condition="Exists('$(GameDir)\BepInEx\plugins')">
+		<Copy SourceFiles="$(TargetPath)" DestinationFolder="$(GameDir)\BepInEx\plugins" />
+	</Target>
+
+</Project>
