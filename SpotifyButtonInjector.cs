@@ -421,9 +421,9 @@ namespace ChillWithYou_SpotifyMod
         // === ปุ่มควบคุม ===
         private static async Task OnPrevClicked()
         {
+            string trackBefore = _currentTrackId;
             await SpotifyApi.Previous();
-            await Task.Delay(300);
-            await RefreshNowPlaying();
+            await RefreshAfterPlay(trackBefore, _lastSeenPlaylistContextId);
         }
 
         private static async Task OnPlayPauseClicked()
@@ -459,9 +459,9 @@ namespace ChillWithYou_SpotifyMod
 
         private static async Task OnNextClicked()
         {
+            string trackBefore = _currentTrackId;
             await SpotifyApi.Next();
-            await Task.Delay(300);
-            await RefreshNowPlaying();
+            await RefreshAfterPlay(trackBefore, _lastSeenPlaylistContextId);
         }
 
         private static void OnConnectClicked()
@@ -636,7 +636,8 @@ namespace ChillWithYou_SpotifyMod
                 UnityEngine.Object.Destroy(parent.GetChild(i).gameObject);
         }
 
-        public static async Task RefreshNowPlaying()
+        // คืนข้อมูลเพลงที่เพิ่งดึงมา ให้ RefreshAfterPlay ใช้เช็คว่า Spotify สลับเพลงให้แล้วหรือยัง
+        public static async Task<SpotifyNowPlayingInfo> RefreshNowPlaying()
         {
             Plugin.Log.LogInfo("[SpotifyPatches] RefreshNowPlaying: calling GetCurrentlyPlaying...");
             SpotifyNowPlayingInfo info = await SpotifyApi.GetCurrentlyPlaying();
@@ -656,6 +657,22 @@ namespace ChillWithYou_SpotifyMod
                 // commit เฉพาะตอนโหลดสำเร็จ (หรือไม่มี playlist ให้โหลด) - ถ้าพลาดปล่อยให้รอบ poll หน้า retry เอง
                 if (loaded || string.IsNullOrEmpty(playlistId))
                     _lastSeenPlaylistContextId = playlistId;
+            }
+
+            return info;
+        }
+
+        // Spotify ใช้เวลาครู่หนึ่งกว่าจะสลับเพลง/context หลังรับคำสั่ง play - refresh รอบเดียวหลัง delay สั้นๆ
+        // มักยังเห็นของเก่า แล้ว UI จะค้างยาวเพราะไม่มี polling ตามเวลา จึงวนเช็คสูงสุด 4 รอบ (~1.8 วิ)
+        // และหยุดทันทีที่เห็นเพลงหรือ playlist เปลี่ยนไปจากตอนก่อนสั่ง
+        private static async Task RefreshAfterPlay(string trackIdBefore, string playlistIdBefore)
+        {
+            for (int attempt = 0; attempt < 4; attempt++)
+            {
+                await Task.Delay(attempt == 0 ? 300 : 500);
+                SpotifyNowPlayingInfo info = await RefreshNowPlaying();
+                if (info != null && (info.TrackId != trackIdBefore || info.PlaylistContextId != playlistIdBefore))
+                    return;
             }
         }
 
@@ -1171,9 +1188,9 @@ namespace ChillWithYou_SpotifyMod
             if (!string.IsNullOrEmpty(SpotifyApi.LastKnownDeviceId))
                 path += $"?device_id={SpotifyApi.LastKnownDeviceId}";
             string body = $"{{\"uris\":[\"spotify:track:{trackId}\"]}}";
+            string trackBefore = _currentTrackId;
             await SpotifyApi.SendPlayBody(path, body);
-            await Task.Delay(300);
-            await RefreshNowPlaying();
+            await RefreshAfterPlay(trackBefore, _lastSeenPlaylistContextId);
         }
 
         // สั่งเล่นทั้ง context (playlist/album) ตั้งแต่ต้น - ใช้กับการกด playlist จากผลค้นหา
@@ -1184,9 +1201,9 @@ namespace ChillWithYou_SpotifyMod
             if (!string.IsNullOrEmpty(SpotifyApi.LastKnownDeviceId))
                 path += $"?device_id={SpotifyApi.LastKnownDeviceId}";
             string body = $"{{\"context_uri\":\"{contextUri}\"}}";
+            string trackBefore = _currentTrackId;
             await SpotifyApi.SendPlayBody(path, body);
-            await Task.Delay(300);
-            await RefreshNowPlaying();
+            await RefreshAfterPlay(trackBefore, _lastSeenPlaylistContextId);
         }
 
         // เล่นเพลงจากตำแหน่งใน playlist/album โดยตรง เพื่อให้ปุ่ม next/prev ยังเดินตาม context เดิมต่อได้
@@ -1199,9 +1216,9 @@ namespace ChillWithYou_SpotifyMod
             string body = string.IsNullOrEmpty(contextUri)
                 ? $"{{\"uris\":[\"spotify:track:{trackId}\"]}}"
                 : $"{{\"context_uri\":\"{contextUri}\",\"offset\":{{\"uri\":\"spotify:track:{trackId}\"}}}}";
+            string trackBefore = _currentTrackId;
             await SpotifyApi.SendPlayBody(path, body);
-            await Task.Delay(300);
-            await RefreshNowPlaying();
+            await RefreshAfterPlay(trackBefore, _lastSeenPlaylistContextId);
         }
 
         private static async Task LoadAlbumTracks(string albumId, string albumName, string coverUrl = null)
