@@ -587,12 +587,13 @@ namespace ChillWithYou_SpotifyMod
                     Image rowBg = row.AddComponent<Image>();
                     rowBg.sprite = UiSprites.Rounded; // hover เป็นแถบมุมโค้งแบบแถวรายการของเกม
                     rowBg.type = Image.Type.Sliced;
-                    rowBg.color = new Color(0f, 0f, 0f, 0f);
+                    rowBg.color = Color.white; // alpha จริงมาจาก ColorBlock - ถ้าตั้ง alpha 0 ตรงนี้ tint จะโดนคูณจนมองไม่เห็น
                     Button rowBtn = row.AddComponent<Button>();
                     ColorBlock cb = rowBtn.colors;
                     cb.highlightedColor = new Color(1f, 1f, 1f, 0.08f);
                     cb.pressedColor = new Color(1f, 1f, 1f, 0.15f);
-                    cb.normalColor = new Color(0f, 0f, 0f, 0f);
+                    cb.normalColor = new Color(1f, 1f, 1f, 0f);
+                    cb.selectedColor = new Color(1f, 1f, 1f, 0f); // กันแถวติดสว่างค้างหลังกด (default 0.96)
                     rowBtn.colors = cb;
                     rowBtn.targetGraphic = rowBg;
                     rowBtn.onClick.AddListener(() => SafeFireAndForget(PlayTrackInPlaylist(capturedContextUri, capturedTrackId)));
@@ -884,10 +885,11 @@ namespace ChillWithYou_SpotifyMod
                 cb.normalColor = Color.white;
                 cb.highlightedColor = new Color(0.92f, 0.92f, 0.92f, 1f);
                 cb.pressedColor = new Color(0.78f, 0.78f, 0.78f, 1f);
+                cb.selectedColor = Color.white; // default 0.96 ขาวเกือบทึบ - ถ้าไม่ตั้งปุ่มจะติดสว่างค้างหลังกด
             }
             else
             {
-                // วงแหวนคงที่ตลอด feedback มาจากวงกลม fill ข้างในที่โผล่ตอนชี้/กด
+                // วงแหวนคงที่ตลอด feedback เป็นวงกลมสีเข้มจางๆ โผล่ข้างใน (ใช้สีเข้มเพื่อไม่ให้กลืน glyph ขาว)
                 GameObject pressGo = new GameObject("PressFill");
                 pressGo.transform.SetParent(go.transform, worldPositionStays: false);
                 RectTransform pressRt = pressGo.AddComponent<RectTransform>();
@@ -896,10 +898,12 @@ namespace ChillWithYou_SpotifyMod
                 press.sprite = UiSprites.Circle;
                 press.preserveAspect = true;
                 press.raycastTarget = false;
+                press.color = Color.black; // tint จาก ColorBlock คุมแค่ alpha - ตัว fill เป็นสีเข้มเสมอ
                 btn.targetGraphic = press;
                 cb.normalColor = new Color(1f, 1f, 1f, 0f);
-                cb.highlightedColor = HoverFill;
-                cb.pressedColor = PressFill;
+                cb.highlightedColor = new Color(1f, 1f, 1f, 0.15f);
+                cb.pressedColor = new Color(1f, 1f, 1f, 0.35f);
+                cb.selectedColor = new Color(1f, 1f, 1f, 0f); // กลับหายทันทีหลังปล่อย ไม่ติดค้าง
             }
             btn.colors = cb;
 
@@ -947,6 +951,7 @@ namespace ChillWithYou_SpotifyMod
                 cb.normalColor = Color.white;
                 cb.highlightedColor = new Color(0.93f, 0.93f, 0.93f, 1f);
                 cb.pressedColor = new Color(0.75f, 0.75f, 0.75f, 1f);
+                cb.selectedColor = Color.white; // default 0.96 - กันปุ่มติดสีค้างหลังกด
             }
             else
             {
@@ -958,10 +963,12 @@ namespace ChillWithYou_SpotifyMod
                 press.sprite = UiSprites.Pill;
                 press.type = Image.Type.Sliced;
                 press.raycastTarget = false;
+                press.color = Color.black; // fill สีเข้ม กันกลืนตัวหนังสือขาวตอนกด
                 btn.targetGraphic = press;
                 cb.normalColor = new Color(1f, 1f, 1f, 0f);
-                cb.highlightedColor = HoverFill;
-                cb.pressedColor = PressFill;
+                cb.highlightedColor = new Color(1f, 1f, 1f, 0.15f);
+                cb.pressedColor = new Color(1f, 1f, 1f, 0.35f);
+                cb.selectedColor = new Color(1f, 1f, 1f, 0f);
             }
             btn.colors = cb;
 
@@ -1315,12 +1322,13 @@ namespace ChillWithYou_SpotifyMod
                 Image rowBg = row.AddComponent<Image>();
                 rowBg.sprite = UiSprites.Rounded;
                 rowBg.type = Image.Type.Sliced;
-                rowBg.color = new Color(0f, 0f, 0f, 0f);
+                rowBg.color = Color.white; // alpha จริงมาจาก ColorBlock
                 Button rowBtn = row.AddComponent<Button>();
                 ColorBlock cb = rowBtn.colors;
                 cb.highlightedColor = new Color(1f, 1f, 1f, 0.08f);
                 cb.pressedColor = new Color(1f, 1f, 1f, 0.15f);
-                cb.normalColor = new Color(0f, 0f, 0f, 0f);
+                cb.normalColor = new Color(1f, 1f, 1f, 0f);
+                cb.selectedColor = new Color(1f, 1f, 1f, 0f); // กันแถวติดสว่างค้างหลังกด
                 rowBtn.colors = cb;
                 rowBtn.targetGraphic = rowBg;
                 rowBtn.onClick.AddListener(onClick);
