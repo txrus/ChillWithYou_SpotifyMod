@@ -18,7 +18,6 @@ namespace ChillWithYou_SpotifyMod
         {
             MainThreadDispatcher.Enqueue(action);
         }
-        private PlaylistSelectionUI _playlistUiManager;
         private async void Awake()
         {
             Log = Logger;
