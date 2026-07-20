@@ -288,6 +288,14 @@ namespace ChillWithYou_SpotifyMod
                 searchBtnLe.minWidth = 56f;
                 searchBtn.onClick.AddListener(() => SafeFireAndForget(OnSearchClicked()));
 
+                // ปุ่มเรียกดู playlist ของตัวเอง - แสดงผลในพื้นที่เดียวกับผลค้นหา
+                Button myListsBtn = CreateTextButton(_searchRow.transform, "My Lists", ButtonNormal, ButtonPressed);
+                LayoutElement myListsBtnLe = myListsBtn.gameObject.AddComponent<LayoutElement>();
+                myListsBtnLe.preferredWidth = 62f;
+                myListsBtnLe.minWidth = 62f;
+                myListsBtn.onClick.AddListener(() => SafeFireAndForget(OnMyPlaylistsClicked()));
+                _showingMyPlaylists = false; // UI ชุดใหม่เริ่มจาก list ว่างเสมอ กัน toggle ค้างจากรอบก่อน
+
                 // --- Search results list (แยก 4 หมวด: Tracks/Artists/Albums/Playlists) ---
                 _searchResultsList = new GameObject("SearchResultsList");
                 _searchResultsList.transform.SetParent(_spotifySection.transform, worldPositionStays: false);
@@ -879,6 +887,66 @@ namespace ChillWithYou_SpotifyMod
             Plugin.RunOnMainThread(() => BuildSearchResults(results));
         }
 
+        // toggle รายชื่อ playlist ของ user ในพื้นที่ผลค้นหา: กดครั้งแรกแสดง กดซ้ำหุบกลับ
+        // ข้อมูลถูก cache ทั้ง session ฝั่ง SpotifyWebApi - กดกี่รอบก็ยิง API แค่ครั้งแรกครั้งเดียว
+        private static bool _showingMyPlaylists;
+
+        private static async Task OnMyPlaylistsClicked()
+        {
+            if (!SpotifyAuth.IsLoggedIn) return;
+
+            if (_showingMyPlaylists)
+            {
+                _showingMyPlaylists = false;
+                Plugin.RunOnMainThread(() =>
+                {
+                    if (_searchResultsList == null) return;
+                    ClearChildren(_searchResultsList.transform);
+                    LayoutRebuilder.ForceRebuildLayoutImmediate(_searchResultsList.GetComponent<RectTransform>());
+                    if (_cachedScrollRect != null)
+                        LayoutRebuilder.ForceRebuildLayoutImmediate(_cachedScrollRect.content);
+                });
+                return;
+            }
+
+            System.Collections.Generic.List<UserPlaylistInfo> playlists =
+                await SpotifyWebApi.GetMyPlaylistsAsync(limit: 20);
+            Plugin.RunOnMainThread(() => BuildMyPlaylistRows(playlists));
+        }
+
+        private static void BuildMyPlaylistRows(System.Collections.Generic.List<UserPlaylistInfo> playlists)
+        {
+            if (_searchResultsList == null) return;
+            ClearChildren(_searchResultsList.transform);
+            _showingMyPlaylists = true;
+
+            CreateSectionLabel(_searchResultsList.transform, "My Playlists");
+
+            if (playlists == null || playlists.Count == 0)
+            {
+                Text msg = CreateText(_searchResultsList.transform,
+                    playlists == null ? "Failed to load playlists, try again" : "No playlists in this account",
+                    11, TextAnchor.MiddleLeft);
+                msg.color = new Color(0.65f, 0.65f, 0.65f, 1f);
+            }
+            else
+            {
+                foreach (UserPlaylistInfo p in playlists)
+                {
+                    UserPlaylistInfo captured = p;
+                    // สั่งเล่นทั้ง playlist ผ่าน context_uri (อ่าน track list ตรงๆ โดนบล็อกใน dev mode อยู่แล้ว)
+                    // พอเริ่มเล่น RefreshNowPlaying จะเห็น context ใหม่แล้วอัปเดตชื่อ/ปก/คิวให้เองอัตโนมัติ
+                    BuildSearchRow(_searchResultsList.transform,
+                        p.Name, $"{p.TrackCount} tracks", null,
+                        () => SafeFireAndForget(PlayContext($"spotify:playlist:{captured.Id}")));
+                }
+            }
+
+            LayoutRebuilder.ForceRebuildLayoutImmediate(_searchResultsList.GetComponent<RectTransform>());
+            if (_cachedScrollRect != null)
+                LayoutRebuilder.ForceRebuildLayoutImmediate(_cachedScrollRect.content);
+        }
+
         // onEndEdit ยิงทั้งตอนกด Enter และตอน field เสีย focus (คลิกที่อื่น)
         // เลยต้องเช็คว่าเป็น Enter จริงๆ ก่อนค่อยยิง search (ISubmitHandler ใช้ไม่ได้ - event system ของเกมไม่ส่ง Submit มา)
         private static void OnSearchInputEndEdit(string text)
@@ -891,6 +959,7 @@ namespace ChillWithYou_SpotifyMod
         {
             if (string.IsNullOrWhiteSpace(newText) && _searchResultsList != null)
             {
+                _showingMyPlaylists = false; // list โดนเคลียร์ toggle ต้องกลับสถานะ "หุบ" ด้วย
                 ClearChildren(_searchResultsList.transform);
                 LayoutRebuilder.ForceRebuildLayoutImmediate(_searchResultsList.GetComponent<RectTransform>());
                 if (_cachedScrollRect != null)
@@ -901,6 +970,7 @@ namespace ChillWithYou_SpotifyMod
         private static void BuildSearchResults(SpotifySearchResults results)
         {
             if (_searchResultsList == null) return;
+            _showingMyPlaylists = false; // ผลค้นหาเข้ามาแทนที่รายชื่อ playlist แล้ว
             ClearChildren(_searchResultsList.transform);
 
             bool anyResults = (results.Tracks.Count + results.Artists.Count +
