@@ -7,7 +7,7 @@ using UnityEngine;
 
 namespace ChillWithYou_SpotifyMod
 {
-    [BepInPlugin("com.yourname.spotifyplayer", "Spotify Player Mod", "1.1.0")]
+    [BepInPlugin("com.pw_txr.spotifyplayer", "Spotify Player Mod", "1.1.0")]
     public class Plugin : BaseUnityPlugin
     {
         internal static ManualLogSource Log;
@@ -27,7 +27,7 @@ namespace ChillWithYou_SpotifyMod
             // 1. เรียกใช้งาน Dispatcher อมตะของเราทันทีที่ปลั๊กอินตื่นขึ้นมา
             MainThreadDispatcher.Initialize();
 
-            _harmony = new Harmony("com.yourname.spotifyplayer");
+            _harmony = new Harmony("com.pw_txr.spotifyplayer");
             _harmony.PatchAll(typeof(SpotifyPatches));
             Log.LogInfo("[SpotifyMod v1.1.0] loaded.");
 

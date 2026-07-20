@@ -65,3 +65,7 @@ dotnet build
 - รองรับเฉพาะ Windows (การเก็บ token ใช้ DPAPI)
 - Client ID ของ Spotify ที่อยู่ในโค้ดเป็น public client (PKCE) ตามที่ Spotify ออกแบบไว้ ไม่มี secret ใด ๆ ในโค้ด
 - มอดนี้ไม่มีส่วนเกี่ยวข้องกับผู้พัฒนาเกมหรือ Spotify
+
+## License
+
+[MIT](LICENSE) © pw_txr
