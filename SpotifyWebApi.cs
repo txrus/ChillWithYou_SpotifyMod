@@ -275,6 +275,38 @@ namespace ChillWithYou_SpotifyMod
             return (name, coverUrl, tracks);
         }
 
+        // สร้าง PlaylistInfo จากคิวเพลง สำหรับ context ที่ไม่ใช่ playlist (artist/album)
+        // อ่านรายชื่อเพลงของ context พวกนี้ตรงๆ ไม่ได้แล้ว (/artists/{id}/top-tracks กับ
+        // /artists/{id}/albums ถูกตัดจาก development mode ตั้งแต่รอบ ก.พ. 2026) แต่ /me/player/queue
+        // เป็น playback endpoint ที่ไม่โดนตัด และไม่สนว่า context เป็นชนิดไหน เลยใช้แทนได้
+        // ไม่ cache เพราะฝั่งผู้เรียกยิงเฉพาะตอน context เปลี่ยนอยู่แล้ว
+        // คืน null = โหลดพลาด -> ผู้เรียกไม่ควร commit ว่าโหลดแล้ว จะได้ retry รอบหน้า
+        public static async Task<PlaylistInfo> GetContextQueueAsync(string contextUri, string displayName, byte[] coverBytes, int maxTracks)
+        {
+            if (string.IsNullOrEmpty(contextUri)) return null;
+            try
+            {
+                List<PlaylistTrackInfo> tracks = await GetQueueTracksAsync(maxTracks);
+                if (tracks == null || tracks.Count == 0) return null;
+
+                return new PlaylistInfo
+                {
+                    Id = contextUri,
+                    Name = string.IsNullOrEmpty(displayName) ? "Now playing" : displayName,
+                    Tracks = tracks,
+                    // /me/player/queue ไม่ให้ภาพของตัว context มา ผู้เรียกเลยส่งปกที่โหลดไว้แล้วมาให้
+                    // (ใช้กับ album ที่ทุกเพลงใช้ปกเดียวกันอยู่แล้ว ส่วน artist ส่ง null มา)
+                    CoverImageBytes = coverBytes,
+                    ContextUri = contextUri
+                };
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"[SpotifyWebApi] GetContextQueue exception: {ex}");
+                return null;
+            }
+        }
+
         // ดึงเพลงปัจจุบัน + คิวถัดไปจาก /me/player/queue (ใช้ scope user-read-playback-state ที่มีอยู่แล้ว)
         // ใช้เป็น fallback เวลาอ่าน track list ของ playlist ตรงๆ ไม่ได้ (app ใหม่ใน development mode
         // โดน Spotify บล็อกทั้ง endpoint /tracks (403) และ field tracks ใน /playlists/{id} (โดนตัดเงียบๆ))

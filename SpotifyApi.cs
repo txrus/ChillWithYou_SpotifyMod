@@ -23,6 +23,9 @@ namespace ChillWithYou_SpotifyMod
         public byte[] ThumbnailBytes; // ปกอัลบั้ม โหลดจาก URL ของ Spotify
         public string PlaylistContextId; // parse จาก context.uri ของ /me/player call เดียวกันนี้เลย
                                          // ไม่ต้องยิง endpoint แยกเพื่อเช็คว่า playlist เปลี่ยนไหม
+                                         // null เมื่อเล่นจาก context ที่ไม่ใช่ playlist (artist/album) - ดู ContextUri
+        public string ContextUri;        // context.uri ดิบ เช่น spotify:artist:xxx / spotify:album:xxx
+                                         // ใช้เช็คว่า context เปลี่ยนไหม แทน PlaylistContextId ที่เห็นแค่ playlist
     }
 
     internal static class SpotifyApi
@@ -223,6 +226,7 @@ namespace ChillWithYou_SpotifyMod
                     Duration = TimeSpan.FromMilliseconds((int?)item["duration_ms"] ?? 0),
                     ThumbnailBytes = thumbBytes,
                     PlaylistContextId = playlistContextId,
+                    ContextUri = contextUri,
                 };
             }
             catch (Exception ex)

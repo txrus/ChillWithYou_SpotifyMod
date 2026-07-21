@@ -30,7 +30,8 @@ namespace ChillWithYou_SpotifyMod
         private static GameObject _playlistHeader;
         private static Image _playlistImage;
         private static Text _playlistNameText;
-        private static Text _playlistSubText; // "PLAYING FROM PLAYLIST" - ซ่อนเมื่อไม่ได้เล่นจาก playlist
+        private static Text _playlistSubText; // "PLAYING FROM <PLAYLIST|ALBUM|ARTIST>" ตามชนิดของ context
+                                              // ซ่อนเมื่อไม่ได้เล่นจาก context ใดๆ หรือดูชนิดไม่ออก
 
         private static InputField _searchInput;
         private static GameObject _searchResultsList;
@@ -365,9 +366,9 @@ namespace ChillWithYou_SpotifyMod
                 _spotifySection.SetActive(true);
 
                 // UI เพิ่งถูกสร้างใหม่ทั้งชุด (เกม destroy panel เก่าทิ้งตอนปิดเมนู) -> _queueList ตัวใหม่ยังว่างอยู่
-                // ต้อง reset ตัวจำ playlist เพื่อบังคับให้รอบ poll ถัดไปเรียก RefreshPlaylist มาเติมใหม่
+                // ต้อง reset ตัวจำ context เพื่อบังคับให้รอบ poll ถัดไปเรียก RefreshContext มาเติมใหม่
                 // (ฝั่ง SpotifyWebApi ยัง cache ข้อมูลไว้อยู่ เลยได้ของจาก cache ทันทีโดยไม่เปลือง API call เพิ่ม)
-                _lastSeenPlaylistContextId = null;
+                _lastSeenContextUri = null;
 
                 Plugin.Log.LogInfo("[SpotifyPatches] Spotify section injected.");
             }
@@ -423,7 +424,7 @@ namespace ChillWithYou_SpotifyMod
         {
             string trackBefore = _currentTrackId;
             await SpotifyApi.Previous();
-            await RefreshAfterPlay(trackBefore, _lastSeenPlaylistContextId);
+            await RefreshAfterPlay(trackBefore, _lastSeenContextUri);
         }
 
         private static async Task OnPlayPauseClicked()
@@ -461,7 +462,7 @@ namespace ChillWithYou_SpotifyMod
         {
             string trackBefore = _currentTrackId;
             await SpotifyApi.Next();
-            await RefreshAfterPlay(trackBefore, _lastSeenPlaylistContextId);
+            await RefreshAfterPlay(trackBefore, _lastSeenContextUri);
         }
 
         private static void OnConnectClicked()
@@ -488,20 +489,33 @@ namespace ChillWithYou_SpotifyMod
         // เรียกจาก RefreshNowPlaying เท่านั้น เมื่อ context playlist เปลี่ยนไปจากที่จำไว้
         // ไม่มี timer แยกสำหรับ playlist อีกต่อไป - ใช้ playlistId ที่ parse มาจาก /me/player
         // call เดียวกันกับ now-playing เลย ไม่ต้องยิง endpoint แยก
-        private static string _lastSeenPlaylistContextId;
+        private static string _lastSeenContextUri;
 
         // กดปุ่ม ↻ ที่ header: ล้าง cache แล้วดึงคิวล่าสุดของ playlist ปัจจุบันใหม่ทั้งชุด
         private static async Task ForceRefreshQueue()
         {
             if (!SpotifyAuth.IsLoggedIn) return;
             SpotifyWebApi.InvalidateCache();
-            _lastSeenPlaylistContextId = null; // บังคับให้ RefreshNowPlaying โหลด playlist ใหม่รอบนี้เลย
+            _lastSeenContextUri = null; // บังคับให้ RefreshNowPlaying โหลด context ใหม่รอบนี้เลย
             await RefreshNowPlaying();
         }
 
-        // คืน true เมื่อได้ playlist พร้อม track list มาจริงๆ (ให้ผู้เรียกตัดสินใจว่าจะ commit ว่าโหลดแล้วหรือรอ retry)
-        private static async Task<bool> RefreshPlaylist(string playlistContextId)
+        // คืน true เมื่อได้รายชื่อเพลงมาจริงๆ (ให้ผู้เรียกตัดสินใจว่าจะ commit ว่าโหลดแล้วหรือรอ retry)
+        // แยกตามชนิดของ context: playlist อ่านจาก /playlists/{id} ได้ ส่วน artist/album อ่านไม่ได้แล้ว
+        // เลยถอยไปใช้คิวเพลงจาก /me/player/queue แทน (ไม่งั้นหน้า queue จะว่างทั้งที่เพลงเล่นอยู่)
+        private static async Task<bool> RefreshContext(SpotifyNowPlayingInfo info)
         {
+            string contextUri = info?.ContextUri;
+            string playlistContextId = info?.PlaylistContextId;
+
+            if (!string.IsNullOrEmpty(contextUri) && string.IsNullOrEmpty(playlistContextId))
+            {
+                // album: ทุกเพลงในอัลบั้มใช้ปกเดียวกันอยู่แล้ว ยืมปกของเพลงที่เล่นอยู่มาใช้เป็นปก header ได้เลย
+                // artist: ปกจะเปลี่ยนไปตามอัลบั้มของแต่ละเพลง ใช้ไม่ได้ -> ส่ง null แล้วซ่อนช่องรูปแทน
+                byte[] cover = IsArtistContext(contextUri) ? null : info?.ThumbnailBytes;
+                return await RefreshQueueContext(contextUri, info?.Artist, cover);
+            }
+
             // 21 = เพลงปัจจุบัน + คิวอีก 20 ซึ่งเป็นเพดานสูงสุดที่ /me/player/queue ให้มา (ไม่มี pagination ต่อ)
             PlaylistInfo playlist = await SpotifyWebApi.GetCurrentPlaylistAsync(playlistContextId, maxTracks: 21);
             Plugin.RunOnMainThread(() =>
@@ -514,13 +528,43 @@ namespace ChillWithYou_SpotifyMod
             return playlist != null && playlist.Id == playlistContextId && playlist.Tracks != null;
         }
 
+        // context ที่ไม่ใช่ playlist (artist/album) - เอาคิวเพลงมาแสดงแทนรายชื่อเพลงของ context
+        // ถ้าดึงคิวไม่ได้ ปล่อยของเดิมค้างไว้แล้วคืน false เพื่อให้ retry แทนการล้างหน้าจอเป็นค่าว่าง
+        private static async Task<bool> RefreshQueueContext(string contextUri, string displayName, byte[] coverBytes)
+        {
+            PlaylistInfo queueInfo = await SpotifyWebApi.GetContextQueueAsync(contextUri, displayName, coverBytes, maxTracks: 21);
+            if (queueInfo == null) return false;
+
+            Plugin.RunOnMainThread(() =>
+            {
+                ApplyPlaylist(queueInfo);
+                if (_cachedScrollRect != null)
+                    LayoutRebuilder.ForceRebuildLayoutImmediate(_cachedScrollRect.content);
+            });
+            return true;
+        }
+
+        // "spotify:album:xxx" -> "ALBUM" / คืน null เมื่อไม่มี context uri หรือเป็นชนิดที่ไม่รู้จัก
+        // (ให้ผู้เรียกซ่อน label ไปเลย ดีกว่าเดาผิดแล้วบอกผู้เล่นว่ากำลังเล่นจากอะไรที่ไม่จริง)
+        private static string ContextKindLabel(string contextUri)
+        {
+            if (string.IsNullOrEmpty(contextUri)) return null;
+            if (contextUri.StartsWith("spotify:playlist:")) return "PLAYLIST";
+            if (contextUri.StartsWith("spotify:album:")) return "ALBUM";
+            if (contextUri.StartsWith("spotify:artist:")) return "ARTIST";
+            return null;
+        }
+
+        private static bool IsArtistContext(string contextUri) =>
+            !string.IsNullOrEmpty(contextUri) && contextUri.StartsWith("spotify:artist:");
+
         private static void ApplyPlaylist(PlaylistInfo playlist)
         {
             if (_queueList == null) return;
 
             if (playlist == null)
             {
-                // ไม่ได้เล่นจาก playlist อยู่ตอนนี้ (เช่น เล่นจาก album/liked songs) -> เคลียร์ของเก่าทิ้ง
+                // ไม่ได้เล่นจาก context ใดๆ ตอนนี้ (เช่น เล่นเพลงเดี่ยวๆ) -> เคลียร์ของเก่าทิ้ง
                 if (_playlistNameText != null) _playlistNameText.text = "Not playing from a playlist";
                 if (_playlistSubText != null) _playlistSubText.gameObject.SetActive(false);
                 ClearChildren(_queueList.transform);
@@ -529,9 +573,20 @@ namespace ChillWithYou_SpotifyMod
             }
 
             if (_playlistNameText != null) _playlistNameText.text = playlist.Name ?? "-";
-            if (_playlistSubText != null) _playlistSubText.gameObject.SetActive(true);
+            if (_playlistSubText != null)
+            {
+                // บอกให้ตรงกับสิ่งที่กดเล่นจริง ไม่งั้นเล่นจากศิลปิน/อัลบั้มแล้วยังขึ้นว่า PLAYLIST
+                string kind = ContextKindLabel(playlist.ContextUri);
+                _playlistSubText.gameObject.SetActive(kind != null);
+                if (kind != null) _playlistSubText.text = $"PLAYING FROM {kind}";
+            }
 
-            if (playlist.CoverImageBytes != null && playlist.CoverImageBytes.Length > 0)
+            // artist ไม่มีปกให้ใช้ (คิวเพลงไม่ได้ให้ภาพของตัว context มา) -> ซ่อนช่องรูปไปเลย
+            // เอาแค่ชื่อศิลปินพอ ดีกว่าโชว์กล่อง placeholder เทาเปล่าๆ ค้างไว้
+            bool showCover = !IsArtistContext(playlist.ContextUri);
+            if (_playlistImage != null) _playlistImage.gameObject.SetActive(showCover);
+
+            if (showCover && playlist.CoverImageBytes != null && playlist.CoverImageBytes.Length > 0)
             {
                 Texture2D tex = new Texture2D(2, 2);
                 if (tex.LoadImage(playlist.CoverImageBytes) && _playlistImage != null)
@@ -541,7 +596,7 @@ namespace ChillWithYou_SpotifyMod
                     _playlistImage.color = Color.white; // ล้าง tint เทาของ placeholder ไม่งั้นรูปโดนคูณสีจนคล้ำ
                 }
             }
-            else if (_playlistImage != null)
+            else if (showCover && _playlistImage != null)
             {
                 // ไม่มีปกมาด้วย -> รีเซ็ตกลับ placeholder กันภาพปกของ playlist ก่อนหน้าค้างแสดงผิดอัน
                 _playlistImage.sprite = null;
@@ -567,6 +622,10 @@ namespace ChillWithYou_SpotifyMod
                 PlaylistTrackInfo t = playlist.Tracks[i];
                 string capturedTrackId = t.Id;
                 string capturedContextUri = playlist.ContextUri;
+                // artist: กดเลือกเพลงไม่ได้ ยืนยันด้วยการทดสอบจริงแล้วว่า Spotify ปฏิเสธ offset ใน
+                // artist context (ตรงกับที่เอกสารบอกว่า offset รองรับแค่ album/playlist) และเล่นเพลง
+                // เดี่ยวแทนก็ทำให้หลุด context จน next/prev ไม่เดินตามศิลปินต่อ -> แสดงคิวอย่างเดียว
+                bool rowClickable = !IsArtistContext(playlist.ContextUri);
                 GameObject row = new GameObject("PlaylistRow_" + i);
                 row.transform.SetParent(_queueList.transform, worldPositionStays: false);
                 row.AddComponent<RectTransform>();
@@ -580,7 +639,7 @@ namespace ChillWithYou_SpotifyMod
                 rowHlg.spacing = 6f;
                 rowHlg.childAlignment = TextAnchor.MiddleLeft;
 
-                if (!string.IsNullOrEmpty(capturedTrackId))
+                if (rowClickable && !string.IsNullOrEmpty(capturedTrackId))
                 {
                     Image rowBg = row.AddComponent<Image>();
                     rowBg.color = new Color(0f, 0f, 0f, 0f); // โปร่งใส มีไว้รับคลิกให้ทั้งแถวเท่านั้น
@@ -650,13 +709,13 @@ namespace ChillWithYou_SpotifyMod
 
             // เช็ค playlist เปลี่ยนไหม "ต่อพ่วง" จาก call เดียวกันนี้เลย ไม่ยิง endpoint แยกอีกต่างหาก
             // และไม่มี timer คอยเช็คเป็นระยะแล้ว จะเช็คเฉพาะตอนที่ยังไงก็ต้องยิง now-playing อยู่แล้วเท่านั้น
-            string playlistId = info?.PlaylistContextId;
-            if (SpotifyAuth.IsLoggedIn && playlistId != _lastSeenPlaylistContextId)
+            string contextUri = info?.ContextUri;
+            if (SpotifyAuth.IsLoggedIn && contextUri != _lastSeenContextUri)
             {
-                bool loaded = await RefreshPlaylist(playlistId);
-                // commit เฉพาะตอนโหลดสำเร็จ (หรือไม่มี playlist ให้โหลด) - ถ้าพลาดปล่อยให้รอบ poll หน้า retry เอง
-                if (loaded || string.IsNullOrEmpty(playlistId))
-                    _lastSeenPlaylistContextId = playlistId;
+                bool loaded = await RefreshContext(info);
+                // commit เฉพาะตอนโหลดสำเร็จ (หรือไม่มี context ให้โหลด) - ถ้าพลาดปล่อยให้รอบ poll หน้า retry เอง
+                if (loaded || string.IsNullOrEmpty(contextUri))
+                    _lastSeenContextUri = contextUri;
             }
 
             return info;
@@ -664,14 +723,14 @@ namespace ChillWithYou_SpotifyMod
 
         // Spotify ใช้เวลาครู่หนึ่งกว่าจะสลับเพลง/context หลังรับคำสั่ง play - refresh รอบเดียวหลัง delay สั้นๆ
         // มักยังเห็นของเก่า แล้ว UI จะค้างยาวเพราะไม่มี polling ตามเวลา จึงวนเช็คสูงสุด 4 รอบ (~1.8 วิ)
-        // และหยุดทันทีที่เห็นเพลงหรือ playlist เปลี่ยนไปจากตอนก่อนสั่ง
-        private static async Task RefreshAfterPlay(string trackIdBefore, string playlistIdBefore)
+        // และหยุดทันทีที่เห็นเพลงหรือ context เปลี่ยนไปจากตอนก่อนสั่ง
+        private static async Task RefreshAfterPlay(string trackIdBefore, string contextUriBefore)
         {
             for (int attempt = 0; attempt < 4; attempt++)
             {
                 await Task.Delay(attempt == 0 ? 300 : 500);
                 SpotifyNowPlayingInfo info = await RefreshNowPlaying();
-                if (info != null && (info.TrackId != trackIdBefore || info.PlaylistContextId != playlistIdBefore))
+                if (info != null && (info.TrackId != trackIdBefore || info.ContextUri != contextUriBefore))
                     return;
             }
         }
@@ -1142,8 +1201,14 @@ namespace ChillWithYou_SpotifyMod
                 CreateSectionLabel(_searchResultsList.transform, "Artists");
                 foreach (SearchArtistResult a in results.Artists)
                 {
-                    // กด artist -> ไม่ support play directly ผ่าน Web API เลยแสดง top tracks แทน (ข้าม implementation ณ ตอนนี้)
-                    BuildSearchRow(_searchResultsList.transform, a.Name, "Artist", null, null);
+                    SearchArtistResult captured = a;
+                    // สั่งเล่น artist context ไปเลย - ดึงรายชื่อเพลงของศิลปินมาแสดงก่อนไม่ได้แล้ว เพราะ
+                    // /artists/{id}/top-tracks กับ /artists/{id}/albums ถูกตัดจาก Development Mode
+                    // ตั้งแต่ Spotify Web API รอบ ก.พ. 2026 (playback control ยังใช้ได้ปกติ)
+                    // พอเริ่มเล่น RefreshNowPlaying จะเห็น context ใหม่แล้วเติมชื่อ/ปก/คิวให้เอง
+                    BuildSearchRow(_searchResultsList.transform,
+                        a.Name, "Artist", null,
+                        () => SafeFireAndForget(PlayContext($"spotify:artist:{captured.Id}")));
                 }
             }
 
@@ -1190,7 +1255,7 @@ namespace ChillWithYou_SpotifyMod
             string body = $"{{\"uris\":[\"spotify:track:{trackId}\"]}}";
             string trackBefore = _currentTrackId;
             await SpotifyApi.SendPlayBody(path, body);
-            await RefreshAfterPlay(trackBefore, _lastSeenPlaylistContextId);
+            await RefreshAfterPlay(trackBefore, _lastSeenContextUri);
         }
 
         // สั่งเล่นทั้ง context (playlist/album) ตั้งแต่ต้น - ใช้กับการกด playlist จากผลค้นหา
@@ -1203,10 +1268,11 @@ namespace ChillWithYou_SpotifyMod
             string body = $"{{\"context_uri\":\"{contextUri}\"}}";
             string trackBefore = _currentTrackId;
             await SpotifyApi.SendPlayBody(path, body);
-            await RefreshAfterPlay(trackBefore, _lastSeenPlaylistContextId);
+            await RefreshAfterPlay(trackBefore, _lastSeenContextUri);
         }
 
         // เล่นเพลงจากตำแหน่งใน playlist/album โดยตรง เพื่อให้ปุ่ม next/prev ยังเดินตาม context เดิมต่อได้
+        // ไม่ถูกเรียกด้วย artist context เพราะแถวคิวของศิลปินไม่ได้ผูกปุ่มไว้ (Spotify ไม่รับ offset)
         private static async Task PlayTrackInPlaylist(string contextUri, string trackId)
         {
             if (!SpotifyAuth.IsLoggedIn || string.IsNullOrEmpty(trackId)) return;
@@ -1218,7 +1284,7 @@ namespace ChillWithYou_SpotifyMod
                 : $"{{\"context_uri\":\"{contextUri}\",\"offset\":{{\"uri\":\"spotify:track:{trackId}\"}}}}";
             string trackBefore = _currentTrackId;
             await SpotifyApi.SendPlayBody(path, body);
-            await RefreshAfterPlay(trackBefore, _lastSeenPlaylistContextId);
+            await RefreshAfterPlay(trackBefore, _lastSeenContextUri);
         }
 
         private static async Task LoadAlbumTracks(string albumId, string albumName, string coverUrl = null)
