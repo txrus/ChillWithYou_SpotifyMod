@@ -70,7 +70,8 @@ namespace ChillWithYou_SpotifyMod
             }
         }
 
-        // limitPerType: จำนวนผลลัพธ์สูงสุดต่อประเภท (Spotify อนุญาตสูงสุด 50 ต่อ type)
+        // limitPerType: จำนวนผลลัพธ์สูงสุดต่อประเภท - เพดานของ Development Mode ลดจาก 50 เหลือ 10
+        // ตั้งแต่ Spotify Web API รอบ ก.พ. 2026 (ค่าที่ใช้จริงคือ 5 เลยยังไม่กระทบ)
         public static async Task<SpotifySearchResults> SearchAsync(string query, int limitPerType = 5)
         {
             var results = new SpotifySearchResults();
