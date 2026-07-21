@@ -54,21 +54,8 @@ namespace ChillWithYou_SpotifyMod
     {
         private static readonly HttpClient Http = new HttpClient();
 
-        private static async Task<bool> EnsureValidTokenAsync()
-        {
-            if (DateTime.UtcNow < SpotifyAuth.TokenExpiresAt)
-                return true;
-
-            try
-            {
-                await SpotifyAuth.RefreshAccessToken();
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
-        }
+        // รวมไว้ที่ SpotifyAuth แล้ว - มี lock กัน refresh ซ้อนกันจากหลายคลาสพร้อมกัน
+        private static Task<bool> EnsureValidTokenAsync() => SpotifyAuth.EnsureValidTokenAsync();
 
         // limitPerType: จำนวนผลลัพธ์สูงสุดต่อประเภท - เพดานของ Development Mode ลดจาก 50 เหลือ 10
         // ตั้งแต่ Spotify Web API รอบ ก.พ. 2026 (ค่าที่ใช้จริงคือ 5 เลยยังไม่กระทบ)

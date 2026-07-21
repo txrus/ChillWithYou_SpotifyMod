@@ -56,6 +56,9 @@ namespace ChillWithYou_SpotifyMod
         private static DateTime _syncedAtUtc;
         private static bool _isInterpolating;
         private static bool _subscribedToTick;
+        private static bool _subscribedToFocus;
+        private static DateTime _lastFocusRefreshUtc = DateTime.MinValue;
+        private static readonly TimeSpan FocusRefreshCooldown = TimeSpan.FromSeconds(3);
         private static bool _songEndTriggerFired;
 
         // === โทนสีตามภาษาดีไซน์ของเกม: แผงดำโปร่งแสง + ขอบ/เส้นขาว + ตัวหนังสือขาวสามระดับ ===
@@ -780,6 +783,7 @@ namespace ChillWithYou_SpotifyMod
             _isInterpolating = true;
             _songEndTriggerFired = false; // เพลงใหม่มาแล้ว (หรือ resync) รีเซ็ตให้ตรวจจับเพลงจบรอบถัดไปได้อีก
             EnsureSubscribedToTick();
+            EnsureSubscribedToFocus();
 
             if (_playPauseLabel != null) _playPauseLabel.text = info.IsPlaying ? "||" : ">";
 
@@ -813,8 +817,31 @@ namespace ChillWithYou_SpotifyMod
             Canvas.willRenderCanvases += TickProgressBar;
         }
 
+        // มอดไม่ได้ poll ตามเวลา (ถอดออกไปตอนลดจำนวน API call) รู้ว่าเพลงเปลี่ยนได้แค่ 2 ทาง:
+        // ผู้ใช้กดปุ่มในเกม หรือนาฬิกาเราเองนับจนเพลงจบ ทั้งคู่พลาดกรณีที่ไปสั่งจากแอป Spotify
+        // โดยตรง - เกมจะยังนับ progress ของเพลงเก่าต่อไปจนกว่าจะกดอะไรสักอย่าง
+        // สลับหน้าต่างกลับเข้าเกมเป็นจังหวะที่บอกได้ค่อนข้างชัดว่าผู้ใช้เพิ่งไปยุ่งกับที่อื่นมา
+        // เลย resync ตรงนี้แทนการกลับไป poll ทุกไม่กี่วินาที ซึ่งเปลืองกว่ามาก
+        private static void EnsureSubscribedToFocus()
+        {
+            if (_subscribedToFocus) return;
+            _subscribedToFocus = true;
+            Application.focusChanged += OnAppFocusChanged;
+        }
+
+        private static void OnAppFocusChanged(bool hasFocus)
+        {
+            if (!hasFocus || !SpotifyAuth.IsLoggedIn) return;
+            // alt-tab รัวๆ ไม่ควรกลายเป็นการยิง API รัวๆ ตาม
+            if (DateTime.UtcNow - _lastFocusRefreshUtc < FocusRefreshCooldown) return;
+            _lastFocusRefreshUtc = DateTime.UtcNow;
+            Plugin.Log.LogInfo("[SpotifyPatches] กลับเข้าเกม - resync เพลงที่เล่นอยู่");
+            SafeFireAndForget(RefreshNowPlaying());
+        }
+
         // รันทุกเฟรม คำนวณตำแหน่งเพลงเองจากเวลาจริงที่ผ่านไป ไม่ยิง API เพิ่มเลย
-        // ค่าจริงจาก Spotify (ที่ poll ทุก 5 วิ) จะมา sync ทับจุด anchor นี้ใหม่ทุกครั้งใน ApplyNowPlaying
+        // ค่าจริงจาก Spotify จะมา sync ทับจุด anchor นี้ใหม่ทุกครั้งใน ApplyNowPlaying
+        // (ไม่มี poll ตามเวลาแล้ว - resync เกิดตอนกดปุ่ม เพลงจบ หรือสลับหน้าต่างกลับเข้าเกม)
         private static void TickProgressBar()
         {
             if (!_isInterpolating || _posText == null || _durText == null || _progressSlider == null)

@@ -33,6 +33,9 @@ namespace ChillWithYou_SpotifyMod
             bool resumed = await SpotifyAuth.TryResumeSessionAsync();
             Log.LogInfo(resumed ? "[Spotify] Resume session สำเร็จ" : "[Spotify] ยังไม่ได้ login");
 
+            if (resumed)
+                await SpotifyApi.LogCurrentUser();
+
 
         }
     }
