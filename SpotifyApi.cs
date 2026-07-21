@@ -37,6 +37,8 @@ namespace ChillWithYou_SpotifyMod
         private static string _lastKnownDeviceId;
         public static string LastKnownDeviceId => _lastKnownDeviceId;
 
+        private static string _loggedDeviceId; // device ตัวล่าสุดที่ log ไปแล้ว - กัน log ซ้ำทุกรอบ poll
+
         // cache ปกอัลบั้มตาม URL - refresh รอบใหม่ที่เพลง/ปกเดิมไม่ต้องโหลดรูปซ้ำ
         private static string _lastCoverUrl;
         private static byte[] _lastCoverBytes;
@@ -45,19 +47,39 @@ namespace ChillWithYou_SpotifyMod
         public static async Task SendPlayBody(string path, string jsonBody)
             => await SendAsync(HttpMethod.Put, path, jsonBody);
 
-        private static async Task<bool> EnsureValidTokenAsync()
-        {
-            if (DateTime.UtcNow < SpotifyAuth.TokenExpiresAt)
-                return true;
+        // รวมไว้ที่ SpotifyAuth แล้ว - มี lock กัน refresh ซ้อนกันจากหลายคลาสพร้อมกัน
+        private static Task<bool> EnsureValidTokenAsync() => SpotifyAuth.EnsureValidTokenAsync();
 
+        private static async Task<HttpResponseMessage> SendNowPlayingRequest()
+        {
+            var request = new HttpRequestMessage(HttpMethod.Get, "https://api.spotify.com/v1/me/player");
+            request.Headers.Add("Authorization", $"Bearer {SpotifyAuth.AccessToken}");
+            return await Http.SendAsync(request);
+        }
+
+        // log ว่า token ที่ถืออยู่เป็นของบัญชีไหน - ใช้ไล่เคสที่ล็อกอินคนละบัญชีกับที่ตั้งใจ
+        // (เช็คว่าเป็น Premium ผ่าน API ไม่ได้แล้ว Spotify ตัด field product ออกตั้งแต่รอบ ก.พ. 2026)
+        public static async Task LogCurrentUser()
+        {
+            if (!await EnsureValidTokenAsync()) return;
             try
             {
-                await SpotifyAuth.RefreshAccessToken();
-                return true;
+                var request = new HttpRequestMessage(HttpMethod.Get, "https://api.spotify.com/v1/me");
+                request.Headers.Add("Authorization", $"Bearer {SpotifyAuth.AccessToken}");
+                HttpResponseMessage resp = await Http.SendAsync(request);
+                string body = await resp.Content.ReadAsStringAsync();
+                if (!resp.IsSuccessStatusCode)
+                {
+                    Plugin.Log.LogWarning($"[SpotifyApi] /me failed: {resp.StatusCode} - {body}");
+                    return;
+                }
+                JObject me = JObject.Parse(body);
+                Plugin.Log.LogInfo($"[SpotifyApi] login เป็นบัญชี: id='{me.Value<string>("id")}' " +
+                    $"name='{me.Value<string>("display_name")}'");
             }
-            catch
+            catch (Exception ex)
             {
-                return false; // ต้อง login ใหม่ผ่านปุ่ม Connect
+                Plugin.Log.LogWarning($"[SpotifyApi] /me exception: {ex.Message}");
             }
         }
 
@@ -134,9 +156,19 @@ namespace ChillWithYou_SpotifyMod
 
             try
             {
-                var request = new HttpRequestMessage(HttpMethod.Get, "https://api.spotify.com/v1/me/player");
-                request.Headers.Add("Authorization", $"Bearer {SpotifyAuth.AccessToken}");
-                HttpResponseMessage resp = await Http.SendAsync(request);
+                HttpResponseMessage resp = await SendNowPlayingRequest();
+
+                // Spotify ตอบ 401 "Access token missing" เป็นครั้งคราวทั้งที่ token ยังใช้ได้จริง
+                // (ยืนยันจาก log: len=248, เหลืออายุ ~58 นาที) มักโผล่ตอนยิงถี่ๆ หลังสั่งเล่นเพลง
+                // ซึ่ง RefreshAfterPlay ยิง 4 รอบใน ~1.8 วิ - ลองใหม่ 1 ครั้งก่อนยอมแพ้
+                // ไม่ refresh token เพราะไม่ได้หมดอายุ การ refresh จะยิ่งเปลืองและไม่แก้อะไร
+                if (resp.StatusCode == HttpStatusCode.Unauthorized && SpotifyAuth.HasUsableTokenPublic)
+                {
+                    Plugin.Log.LogInfo("[SpotifyApi] เจอ 401 ทั้งที่ token ยังดีอยู่ - ลองใหม่อีกครั้ง");
+                    resp.Dispose();
+                    await Task.Delay(250);
+                    resp = await SendNowPlayingRequest();
+                }
 
                 if (resp.StatusCode == (HttpStatusCode)429)
                 {
@@ -154,6 +186,12 @@ namespace ChillWithYou_SpotifyMod
                 {
                     string errBody = await resp.Content.ReadAsStringAsync();
                     Plugin.Log.LogWarning($"[SpotifyApi] GetCurrentlyPlaying failed: {resp.StatusCode} - {errBody}");
+                    // ถ้ายัง 401 อยู่หลัง retry แสดงว่าไม่ใช่อาการชั่วคราวแล้ว - log สภาพ token ไว้สืบต่อ
+                    if (resp.StatusCode == HttpStatusCode.Unauthorized)
+                        Plugin.Log.LogWarning(
+                            $"[SpotifyApi] token ตอนยิง: len={SpotifyAuth.AccessToken?.Length ?? -1}, " +
+                            $"เหลืออายุ={(SpotifyAuth.TokenExpiresAt - DateTime.UtcNow).TotalSeconds:F0}s, " +
+                            $"IsLoggedIn={SpotifyAuth.IsLoggedIn}");
                     return null;
                 }
 
@@ -169,9 +207,20 @@ namespace ChillWithYou_SpotifyMod
                 // เก็บ device_id ไว้ใช้ตอนสั่ง play/pause/next/prev ครั้งถัดไป
                 // ใช้ "as JObject" ก่อน เพราะถ้า field เป็น JSON null จริงๆ Newtonsoft จะคืน JValue (ไม่ใช่ C# null)
                 // แล้ว ?["key"] บน JValue จะ throw InvalidOperationException แทนที่จะคืน null เฉยๆ
-                string deviceId = (string)(obj["device"] as JObject)?["id"];
+                JObject device = obj["device"] as JObject;
+                string deviceId = (string)device?["id"];
                 if (!string.IsNullOrEmpty(deviceId))
                     _lastKnownDeviceId = deviceId;
+
+                // log ตอนสลับอุปกรณ์เท่านั้น กัน log ท่วมจาก poll ทุกรอบ
+                // is_restricted=true คือ Spotify ห้ามสั่งควบคุมอุปกรณ์ตัวนี้ผ่าน Web API
+                if (device != null && deviceId != _loggedDeviceId)
+                {
+                    _loggedDeviceId = deviceId;
+                    Plugin.Log.LogInfo($"[SpotifyApi] device: name='{(string)device["name"]}' " +
+                        $"type='{(string)device["type"]}' active={device["is_active"]} " +
+                        $"restricted={device["is_restricted"]} private={device["is_private_session"]}");
+                }
 
                 // "item" เป็น JSON null ได้ (เช่นตอนไม่ได้เล่นอะไรอยู่) ซึ่ง Newtonsoft จะคืน JValue ไม่ใช่ C# null
                 // ต้องเช็คด้วย "as JObject" ไม่งั้นจะหลุดไปเข้า item["..."] แล้ว throw ทีหลัง

@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 
@@ -61,7 +62,48 @@ namespace ChillWithYou_SpotifyMod
             }
         }
 
-        // ----- เรียกจาก SpotifyApi.EnsureValidToken() เมื่อ token หมดอายุ -----
+        // กัน refresh ซ้อนกัน: เดิม SpotifyApi/SpotifyWebApi/SpotifySearchApi ต่างมี EnsureValidTokenAsync
+        // ของตัวเอง พอ token หมดอายุตอนที่หลายตัวกำลังยิง API อยู่ ทุกตัวจะเห็นว่าหมดอายุพร้อมกัน
+        // แล้วสั่ง refresh พร้อมกัน - ตัวที่มาทีหลังใช้ refresh token ที่ถูกใช้ไปแล้ว จึงโดนปฏิเสธ
+        // และ (ร้ายกว่านั้น) วิ่งเข้า path ที่ลบ refresh token ที่เก็บไว้ทิ้ง
+        private static readonly SemaphoreSlim RefreshLock = new SemaphoreSlim(1, 1);
+
+        // จุดเดียวที่ทุก API call ควรเรียกก่อนยิง เพื่อให้แน่ใจว่ามี access token ที่ใช้ได้
+        // คืน false = ต้องให้ user กด Connect login ใหม่
+        public static async Task<bool> EnsureValidTokenAsync()
+        {
+            if (HasUsableToken())
+                return true;
+
+            await RefreshLock.WaitAsync();
+            try
+            {
+                // ระหว่างที่รอคิว อีกเธรดอาจ refresh เสร็จไปแล้ว - เช็คซ้ำก่อนยิงจริง
+                if (HasUsableToken())
+                    return true;
+
+                await RefreshAccessToken();
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                RefreshLock.Release();
+            }
+        }
+
+        // เช็ค AccessToken ด้วย ไม่ใช่แค่เวลาหมดอายุ - กันเคสที่เวลายังไม่หมดแต่ token ว่าง
+        // ซึ่งจะทำให้ยิง header เป็น "Bearer " เปล่าๆ แล้วโดน 401 "Access token missing"
+        private static bool HasUsableToken() =>
+            !string.IsNullOrEmpty(AccessToken) && DateTime.UtcNow < TokenExpiresAt;
+
+        // ให้ผู้เรียกแยกได้ว่า 401 ที่เจอเป็นเพราะ token เสีย หรือเป็นอาการชั่วคราวฝั่ง Spotify
+        public static bool HasUsableTokenPublic => HasUsableToken();
+
+        // ----- เรียกจาก EnsureValidTokenAsync() เมื่อ token หมดอายุ -----
         // ใช้ refresh token ที่เก็บไว้ ขอ access token ใหม่แบบเงียบๆ ไม่เปิด browser
         // ถ้าไม่มี/ไม่ผ่าน จะ throw เพื่อให้ผู้เรียกรู้ว่าต้องพา user ไป login ใหม่ (ผ่านปุ่ม Connect)
         public static async Task RefreshAccessToken()

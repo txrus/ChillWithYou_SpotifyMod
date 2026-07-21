@@ -54,21 +54,8 @@ namespace ChillWithYou_SpotifyMod
             _cachedMyPlaylists = null;
         }
 
-        private static async Task<bool> EnsureValidTokenAsync()
-        {
-            if (DateTime.UtcNow < SpotifyAuth.TokenExpiresAt)
-                return true;
-
-            try
-            {
-                await SpotifyAuth.RefreshAccessToken();
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
-        }
+        // รวมไว้ที่ SpotifyAuth แล้ว - มี lock กัน refresh ซ้อนกันจากหลายคลาสพร้อมกัน
+        private static Task<bool> EnsureValidTokenAsync() => SpotifyAuth.EnsureValidTokenAsync();
 
         // playlistId มาจาก SpotifyNowPlayingInfo.PlaylistContextId ที่ SpotifyApi.GetCurrentlyPlaying()
         // parse ไว้ให้แล้ว (จาก /me/player call เดียวกัน) ไม่ต้องยิง endpoint แยกมาหา playlist id เอง
