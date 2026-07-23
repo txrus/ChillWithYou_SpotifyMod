@@ -474,19 +474,29 @@ namespace ChillWithYou_SpotifyMod
             SpotifyAuth.StartLogin(OnLoginSuccess, OnLoginFailed);
         }
 
+        // callback นี้ถูกเรียกจาก continuation ของ StartLoginInternal ซึ่งรันบน thread pool
+        // (await GetContextAsync กลับมาไม่ได้อยู่บน main thread) ทุกอย่างที่แตะ Unity UI
+        // ต้อง marshal กลับ main thread ก่อน ไม่งั้นจะ throw "can only be called from the main thread"
+        // แล้วโดนกลืนเงียบๆ (fire-and-forget) -> browser ขึ้น success แต่ panel ในเกมค้างที่ปุ่ม Connect
         private static void OnLoginSuccess()
         {
-            _connectRow.SetActive(false);
-            _controlsRow.SetActive(true);
-            _playlistHeader.SetActive(true);
-            _queueList.SetActive(true);
-            if (_searchRow != null) _searchRow.SetActive(true);
-            SafeFireAndForget(RefreshNowPlaying());
+            Plugin.RunOnMainThread(() =>
+            {
+                _connectRow.SetActive(false);
+                _controlsRow.SetActive(true);
+                _playlistHeader.SetActive(true);
+                _queueList.SetActive(true);
+                if (_searchRow != null) _searchRow.SetActive(true);
+                SafeFireAndForget(RefreshNowPlaying());
+            });
         }
 
         private static void OnLoginFailed(string error)
         {
-            _statusText.text = "Connect failed: " + error;
+            Plugin.RunOnMainThread(() =>
+            {
+                if (_statusText != null) _statusText.text = "Connect failed: " + error;
+            });
         }
 
         // เรียกจาก RefreshNowPlaying เท่านั้น เมื่อ context playlist เปลี่ยนไปจากที่จำไว้
