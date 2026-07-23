@@ -48,9 +48,6 @@ namespace ChillWithYou_SpotifyMod
         // จำ bytes ของปกที่แสดงอยู่ (reference เดิมจาก cache ฝั่ง SpotifyApi) กันสร้าง Texture2D ซ้ำทุกรอบ refresh
         private static byte[] _lastAppliedCoverBytes;
 
-        // ใช้ตัวเดียวร่วมกันทั้ง class - สร้าง HttpClient ใหม่ทุก request จะสะสม socket ค้าง
-        private static readonly System.Net.Http.HttpClient Http = new System.Net.Http.HttpClient();
-
         private static bool _subscribedToTick;
         private static bool _subscribedToFocus;
         private static DateTime _lastFocusRefreshUtc = DateTime.MinValue;
@@ -1256,112 +1253,52 @@ namespace ChillWithYou_SpotifyMod
                 LayoutRebuilder.ForceRebuildLayoutImmediate(_cachedScrollRect.content);
         }
 
-        private static async Task PlayTrack(string trackId)
-        {
-            if (!SpotifyAuth.IsLoggedIn) return;
-            // สั่ง play ผ่าน Web API โดยระบุ track uri ตรงๆ ไม่ต้องรอ context
-            string path = "me/player/play";
-            if (!string.IsNullOrEmpty(SpotifyApi.LastKnownDeviceId))
-                path += $"?device_id={SpotifyApi.LastKnownDeviceId}";
-            string body = $"{{\"uris\":[\"spotify:track:{trackId}\"]}}";
-            string trackBefore = _currentTrackId;
-            await SpotifyApi.SendPlayBody(path, body);
-            await RefreshAfterPlay(trackBefore, _lastSeenContextUri);
-        }
+        // สั่งเล่นเพลงเดียว (ผลค้นหาประเภท track) - หลุดจาก context ที่เล่นอยู่
+        private static Task PlayTrack(string trackId) =>
+            PlayThen(() => SpotifyApi.PlayTrackUri($"spotify:track:{trackId}"));
 
-        // สั่งเล่นทั้ง context (playlist/album) ตั้งแต่ต้น - ใช้กับการกด playlist จากผลค้นหา
-        private static async Task PlayContext(string contextUri)
-        {
-            if (!SpotifyAuth.IsLoggedIn || string.IsNullOrEmpty(contextUri)) return;
-            string path = "me/player/play";
-            if (!string.IsNullOrEmpty(SpotifyApi.LastKnownDeviceId))
-                path += $"?device_id={SpotifyApi.LastKnownDeviceId}";
-            string body = $"{{\"context_uri\":\"{contextUri}\"}}";
-            string trackBefore = _currentTrackId;
-            await SpotifyApi.SendPlayBody(path, body);
-            await RefreshAfterPlay(trackBefore, _lastSeenContextUri);
-        }
+        // สั่งเล่นทั้ง context (playlist/album/artist) ตั้งแต่ต้น - ใช้กับการกด playlist จากผลค้นหา
+        private static Task PlayContext(string contextUri) =>
+            string.IsNullOrEmpty(contextUri)
+                ? Task.CompletedTask
+                : PlayThen(() => SpotifyApi.PlayContextUri(contextUri));
 
         // เล่นเพลงจากตำแหน่งใน playlist/album โดยตรง เพื่อให้ปุ่ม next/prev ยังเดินตาม context เดิมต่อได้
         // ไม่ถูกเรียกด้วย artist context เพราะแถวคิวของศิลปินไม่ได้ผูกปุ่มไว้ (Spotify ไม่รับ offset)
-        private static async Task PlayTrackInPlaylist(string contextUri, string trackId)
+        private static Task PlayTrackInPlaylist(string contextUri, string trackId)
         {
-            if (!SpotifyAuth.IsLoggedIn || string.IsNullOrEmpty(trackId)) return;
-            string path = "me/player/play";
-            if (!string.IsNullOrEmpty(SpotifyApi.LastKnownDeviceId))
-                path += $"?device_id={SpotifyApi.LastKnownDeviceId}";
-            string body = string.IsNullOrEmpty(contextUri)
-                ? $"{{\"uris\":[\"spotify:track:{trackId}\"]}}"
-                : $"{{\"context_uri\":\"{contextUri}\",\"offset\":{{\"uri\":\"spotify:track:{trackId}\"}}}}";
+            if (string.IsNullOrEmpty(trackId)) return Task.CompletedTask;
+            string trackUri = $"spotify:track:{trackId}";
+            return PlayThen(() => string.IsNullOrEmpty(contextUri)
+                ? SpotifyApi.PlayTrackUri(trackUri)
+                : SpotifyApi.PlayContextAtTrackUri(contextUri, trackUri));
+        }
+
+        // ทุกคำสั่งเล่นจบเหมือนกัน: จำเพลงก่อนสั่ง แล้วตาม refresh จนเห็นว่า Spotify สลับให้แล้ว
+        private static async Task PlayThen(Func<Task<bool>> command)
+        {
+            if (!SpotifyAuth.IsLoggedIn) return;
             string trackBefore = _currentTrackId;
-            await SpotifyApi.SendPlayBody(path, body);
+            await command();
             await RefreshAfterPlay(trackBefore, _lastSeenContextUri);
         }
 
+        // กดอัลบั้มจากผลค้นหา -> เอารายชื่อเพลงมาแสดงในพื้นที่คิว ให้เลือกเพลงเองได้ (ไม่เล่นทันที)
         private static async Task LoadAlbumTracks(string albumId, string albumName, string coverUrl = null)
         {
             if (!SpotifyAuth.IsLoggedIn) return;
-            try
+
+            PlaylistInfo albumInfo = await SpotifyWebApi.GetAlbumTracksAsync(albumId, albumName, coverUrl);
+            if (albumInfo == null) return; // โหลดพลาด - ปล่อยของเดิมค้างไว้ดีกว่าล้างจอเป็นว่าง
+
+            Plugin.RunOnMainThread(() =>
             {
-                var request = new System.Net.Http.HttpRequestMessage(
-                    System.Net.Http.HttpMethod.Get,
-                    $"https://api.spotify.com/v1/albums/{albumId}/tracks?limit=20");
-                request.Headers.Add("Authorization", $"Bearer {SpotifyAuth.AccessToken}");
-                var resp = await Http.SendAsync(request);
-                if (!resp.IsSuccessStatusCode) return;
-
-                string json = await resp.Content.ReadAsStringAsync();
-                Newtonsoft.Json.Linq.JObject obj = Newtonsoft.Json.Linq.JObject.Parse(json);
-                var tracks = new System.Collections.Generic.List<PlaylistTrackInfo>();
-
-                if (obj["items"] is Newtonsoft.Json.Linq.JArray items)
-                {
-                    foreach (var it in items)
-                    {
-                        if (it == null) continue;
-                        var artists = it["artists"] as Newtonsoft.Json.Linq.JArray;
-                        string artist = artists != null && artists.Count > 0
-                            ? string.Join(", ", System.Linq.Enumerable.Select(artists, a => (string)a["name"]))
-                            : "-";
-                        tracks.Add(new PlaylistTrackInfo
-                        {
-                            Id = (string)it["id"],
-                            Title = (string)it["name"],
-                            Artist = artist,
-                            DurationMs = (int?)it["duration_ms"] ?? 0
-                        });
-                    }
-                }
-
-                // ปกอัลบั้มเอามาจากผลค้นหาที่มี url อยู่แล้ว (endpoint /albums/{id}/tracks ไม่ให้ภาพมาด้วย)
-                byte[] coverBytes = null;
-                if (!string.IsNullOrEmpty(coverUrl))
-                {
-                    try { coverBytes = await Http.GetByteArrayAsync(coverUrl); }
-                    catch (Exception ex) { Plugin.Log.LogWarning($"[SpotifyPatches] โหลดปกอัลบั้มพลาด: {ex.Message}"); }
-                }
-
-                PlaylistInfo albumInfo = new PlaylistInfo
-                {
-                    Id = albumId,
-                    Name = albumName,
-                    Tracks = tracks,
-                    CoverImageBytes = coverBytes,
-                    ContextUri = $"spotify:album:{albumId}"
-                };
-
-                Plugin.RunOnMainThread(() =>
-                {
-                    if (_playlistHeader != null) _playlistHeader.SetActive(true);
-                    if (_queueList != null) _queueList.SetActive(true);
-                    ApplyPlaylist(albumInfo);
+                if (_playlistHeader != null) _playlistHeader.SetActive(true);
+                if (_queueList != null) _queueList.SetActive(true);
+                ApplyPlaylist(albumInfo);
+                if (_cachedScrollRect != null)
                     LayoutRebuilder.ForceRebuildLayoutImmediate(_cachedScrollRect.content);
-                });
-            }
-            catch (Exception ex)
-            {
-                Plugin.Log.LogError($"[SpotifyPatches] LoadAlbumTracks failed: {ex}");
-            }
+            });
         }
 
         private static void CreateSectionLabel(Transform parent, string label)

@@ -35,17 +35,12 @@ namespace ChillWithYou_SpotifyMod
         // จำ device_id ล่าสุดที่เห็นตอน poll ข้อมูลเพลง เอาไว้ใช้ตอนสั่ง play/pause
         // เพราะ Spotify เจอ "Restriction violated" บ่อยถ้าไม่ระบุ device_id ให้ชัดเจน
         private static string _lastKnownDeviceId;
-        public static string LastKnownDeviceId => _lastKnownDeviceId;
 
         private static string _loggedDeviceId; // device ตัวล่าสุดที่ log ไปแล้ว - กัน log ซ้ำทุกรอบ poll
 
         // cache ปกอัลบั้มตาม URL - refresh รอบใหม่ที่เพลง/ปกเดิมไม่ต้องโหลดรูปซ้ำ
         private static string _lastCoverUrl;
         private static byte[] _lastCoverBytes;
-
-        // เปิดให้ SpotifyButtonsInjector เรียกใช้ตอนสั่ง play track/context จาก search results โดยตรง
-        public static Task<bool> SendPlayBody(string path, string jsonBody)
-            => SpotifyGateway.SendAsync(HttpMethod.Put, path, jsonBody);
 
         // log ว่า token ที่ถืออยู่เป็นของบัญชีไหน - ใช้ไล่เคสที่ล็อกอินคนละบัญชีกับที่ตั้งใจ
         // (เช็คว่าเป็น Premium ผ่าน API ไม่ได้แล้ว Spotify ตัด field product ออกตั้งแต่รอบ ก.พ. 2026)
@@ -72,22 +67,24 @@ namespace ChillWithYou_SpotifyMod
         private static string DeviceQuery(string prefix) =>
             string.IsNullOrEmpty(_lastKnownDeviceId) ? "" : $"{prefix}device_id={_lastKnownDeviceId}";
 
-        // เล่นเพลงเดียวจาก URI ตรงๆ (ใช้กับผลลัพธ์ search ประเภท track)
-        public static Task PlayTrackUri(string trackUri)
-        {
-            string path = "me/player/play" + DeviceQuery("?");
-            string body = $"{{\"uris\":[\"{trackUri}\"]}}";
-            return SpotifyGateway.SendAsync(HttpMethod.Put, path, jsonBody: body);
-        }
+        // เล่นเพลงเดียวจาก URI ตรงๆ (ใช้กับผลลัพธ์ search ประเภท track) - หลุด context เดิม
+        public static Task<bool> PlayTrackUri(string trackUri) =>
+            PlayAsync($"{{\"uris\":[\"{trackUri}\"]}}");
 
-        // เล่นทั้ง context (album/playlist/artist) จาก URI - ใช้กับผลลัพธ์ search ประเภท album/playlist/artist
+        // เล่นทั้ง context (album/playlist/artist) ตั้งแต่ต้น - ใช้กับผลลัพธ์ search ประเภท album/playlist/artist
         // artist URI จะเล่นเป็น top tracks/radio ของศิลปินนั้น (พฤติกรรมมาตรฐานของ Spotify)
-        public static Task PlayContextUri(string contextUri)
-        {
-            string path = "me/player/play" + DeviceQuery("?");
-            string body = $"{{\"context_uri\":\"{contextUri}\"}}";
-            return SpotifyGateway.SendAsync(HttpMethod.Put, path, jsonBody: body);
-        }
+        public static Task<bool> PlayContextUri(string contextUri) =>
+            PlayAsync($"{{\"context_uri\":\"{contextUri}\"}}");
+
+        // เล่นเพลงหนึ่งใน context โดยยังอยู่ใน context นั้น (next/prev เดินตาม playlist/album ต่อได้)
+        // Spotify รับ offset เฉพาะ album/playlist - artist context ใช้ท่านี้ไม่ได้
+        public static Task<bool> PlayContextAtTrackUri(string contextUri, string trackUri) =>
+            PlayAsync($"{{\"context_uri\":\"{contextUri}\",\"offset\":{{\"uri\":\"{trackUri}\"}}}}");
+
+        // ทุกคำสั่งเล่นใช้ envelope เดียวกัน: PUT me/player/play + device_id (ไม่ระบุแล้ว Spotify
+        // ตอบ "Restriction violated" เป็นครั้งคราวเพราะไม่รู้ว่าจะสั่งเครื่องไหน)
+        private static Task<bool> PlayAsync(string jsonBody) =>
+            SpotifyGateway.SendAsync(HttpMethod.Put, "me/player/play" + DeviceQuery("?"), jsonBody);
 
         public static async Task<SpotifyNowPlayingInfo> GetCurrentlyPlaying()
         {
