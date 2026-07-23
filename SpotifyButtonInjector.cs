@@ -1250,6 +1250,10 @@ namespace ChillWithYou_SpotifyMod
 
             LayoutRebuilder.ForceRebuildLayoutImmediate(
                 _searchResultsList.GetComponent<RectTransform>());
+            // ต้อง rebuild content ชั้นนอกด้วย ไม่งั้น section เราไม่สูงขึ้นตามผลค้นหา แล้ว track list
+            // ของเกม (ที่เป็น sibling ถัดจาก section เรา) ไม่เลื่อนลง เลยวาดทับผลค้นหา (เหมือน My Lists ทำ)
+            if (_cachedScrollRect != null)
+                LayoutRebuilder.ForceRebuildLayoutImmediate(_cachedScrollRect.content);
         }
 
         private static async Task PlayTrack(string trackId)
