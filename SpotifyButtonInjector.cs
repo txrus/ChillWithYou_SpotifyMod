@@ -631,7 +631,8 @@ namespace ChillWithYou_SpotifyMod
                 row.transform.SetParent(_queueList.transform, worldPositionStays: false);
                 row.AddComponent<RectTransform>();
                 LayoutElement rowLe = row.AddComponent<LayoutElement>();
-                rowLe.preferredHeight = 30f;
+                rowLe.preferredHeight = 36f; // พอสำหรับ 2 บรรทัด (title 12pt + artist 10pt) ของฟอนต์เกม
+                rowLe.minHeight = 36f;
 
                 HorizontalLayoutGroup rowHlg = row.AddComponent<HorizontalLayoutGroup>();
                 rowHlg.childForceExpandWidth = false;
@@ -666,6 +667,7 @@ namespace ChillWithYou_SpotifyMod
                 Text nameText = CreateText(nameCol.transform, t.Title ?? "-", 12, TextAnchor.MiddleLeft);
                 Text artistText = CreateText(nameCol.transform, t.Artist ?? "-", 10, TextAnchor.MiddleLeft);
                 artistText.color = TextFaint;
+                ClipRowToSingleLine(nameCol, nameText, artistText);
 
                 if (!string.IsNullOrEmpty(capturedTrackId))
                     _queueRowTitles.Add((capturedTrackId, nameText));
@@ -1370,8 +1372,8 @@ namespace ChillWithYou_SpotifyMod
             row.transform.SetParent(parent, worldPositionStays: false);
             row.AddComponent<RectTransform>();
             LayoutElement rowLe = row.AddComponent<LayoutElement>();
-            rowLe.preferredHeight = 32f;
-            rowLe.minHeight = 32f;
+            rowLe.preferredHeight = 36f; // พอสำหรับ 2 บรรทัด (name 12pt + sub 10pt) ของฟอนต์เกม
+            rowLe.minHeight = 36f;
 
             HorizontalLayoutGroup rowHlg = row.AddComponent<HorizontalLayoutGroup>();
             rowHlg.childForceExpandWidth = false;
@@ -1405,11 +1407,13 @@ namespace ChillWithYou_SpotifyMod
             nameVlg.spacing = 1f;
 
             Text titleText = CreateText(nameCol.transform, title ?? "-", 12, TextAnchor.MiddleLeft);
+            Text subText = null;
             if (!string.IsNullOrEmpty(sub))
             {
-                Text subText = CreateText(nameCol.transform, sub, 10, TextAnchor.MiddleLeft);
+                subText = CreateText(nameCol.transform, sub, 10, TextAnchor.MiddleLeft);
                 subText.color = new Color(0.65f, 0.65f, 0.65f, 1f);
             }
+            ClipRowToSingleLine(nameCol, titleText, subText);
 
             if (!string.IsNullOrEmpty(right))
                 CreateInlineText(row.transform, right, 36f);
@@ -1511,6 +1515,16 @@ namespace ChillWithYou_SpotifyMod
             text.verticalOverflow = VerticalWrapMode.Overflow;
 
             return text;
+        }
+
+        // แถวในลิสต์ (คิวเพลง / ผลค้นหา / My Lists) ต้องเป็นบรรทัดเดียวเสมอ:
+        // ชื่อเพลงยาวๆ ให้ตัดที่ขอบคอลัมน์ด้วย RectMask2D แทนการ wrap ลงบรรทัดใหม่ ซึ่งจะดันแถว
+        // ให้สูงเกิน preferredHeight แล้วไปทับแถว/ส่วนอื่นด้านล่าง (ปัญหา UI ซ้อนทับ)
+        private static void ClipRowToSingleLine(GameObject col, params Text[] lines)
+        {
+            col.AddComponent<RectMask2D>();
+            foreach (Text t in lines)
+                if (t != null) t.horizontalOverflow = HorizontalWrapMode.Overflow;
         }
     }
 }
