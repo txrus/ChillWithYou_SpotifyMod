@@ -241,28 +241,35 @@ namespace ChillWithYou_SpotifyMod
             if (obj == null) return null;
 
             var tracks = new List<PlaylistTrackInfo>();
+            // repeat + playlist สั้นกว่าหน้าต่างคิว (~20) ทำให้ /me/player/queue วนกลับไปต้น context
+            // -> เพลงเดิมโผล่ซ้ำ แสดงเพลงละครั้งพอ (dedupe ตาม track id)
+            var seenIds = new HashSet<string>();
 
             // เพลงที่กำลังเล่นอยู่ขึ้นเป็นแถวแรก แล้วตามด้วยคิวถัดไป
             if (obj["currently_playing"] is JObject current)
-                AddQueueTrack(tracks, current);
+                AddQueueTrack(tracks, seenIds, current);
 
             if (obj["queue"] is JArray queue)
             {
                 foreach (JToken t in queue)
                 {
                     if (tracks.Count >= maxTracks) break;
-                    if (t is JObject qt) AddQueueTrack(tracks, qt);
+                    if (t is JObject qt) AddQueueTrack(tracks, seenIds, qt);
                 }
             }
 
             return tracks;
         }
 
-        private static void AddQueueTrack(List<PlaylistTrackInfo> tracks, JObject track)
+        private static void AddQueueTrack(List<PlaylistTrackInfo> tracks, HashSet<string> seenIds, JObject track)
         {
             // ข้าม episode/podcast - เอาเฉพาะ track ("type" อาจไม่มากับ response เสมอ เลยเช็คแบบยอมรับ null)
             string type = (string)track["type"];
             if (type != null && type != "track") return;
+
+            // เพลงซ้ำจากการวนคิว (repeat) - ข้าม เพลงที่ไม่มี id (local file) ปล่อยผ่านเพราะ dedupe ไม่ได้
+            string id = (string)track["id"];
+            if (id != null && !seenIds.Add(id)) return;
 
             JArray artists = track["artists"] as JArray;
             string artist = artists != null && artists.Count > 0
@@ -271,7 +278,7 @@ namespace ChillWithYou_SpotifyMod
 
             tracks.Add(new PlaylistTrackInfo
             {
-                Id = (string)track["id"],
+                Id = id,
                 Title = (string)track["name"],
                 Artist = artist,
                 DurationMs = (int?)track["duration_ms"] ?? 0,
