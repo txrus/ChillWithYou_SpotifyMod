@@ -63,8 +63,14 @@
 	</ItemGroup>
 
 	<!-- Copy DLL เข้าโฟลเดอร์ plugins ของเกมหลัง build (เฉพาะเมื่อโฟลเดอร์มีอยู่จริง) -->
+	<!-- ต้องเอา dependency ที่ไม่ได้มากับเกมไปด้วย ไม่งั้นตอนรันจะ throw "Could not load file or assembly"
+	     แล้ว login ล้ม (ProtectedData ใช้ DPAPI เข้ารหัส refresh token ที่เก็บลงดิสก์) -->
 	<Target Name="PostBuild" AfterTargets="Build" Condition="Exists('$(GameDir)\BepInEx\plugins')">
-		<Copy SourceFiles="$(TargetPath)" DestinationFolder="$(GameDir)\BepInEx\plugins" />
+		<ItemGroup>
+			<PluginDeploy Include="$(TargetPath)" />
+			<PluginDeploy Include="$(TargetDir)System.Security.Cryptography.ProtectedData.dll" />
+		</ItemGroup>
+		<Copy SourceFiles="@(PluginDeploy)" DestinationFolder="$(GameDir)\BepInEx\plugins" SkipUnchangedFiles="true" />
 	</Target>
 
 </Project>
