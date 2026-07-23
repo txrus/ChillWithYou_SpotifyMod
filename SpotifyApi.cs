@@ -1,13 +1,14 @@
-﻿// SpotifyApi.cs
+// SpotifyApi.cs
 // เวอร์ชัน Web API ล้วน (ถอด SMTC ออกทั้งหมด เพราะ Mono ไม่รองรับ WinRT)
 // ต้อง login ผ่าน SpotifyAuth ก่อนถึงจะใช้ปุ่มควบคุมได้ทุกปุ่ม
 // ตัด shuffle/repeat ออกตามที่ตกลงกัน + แก้ปัญหา "Restriction violated" ตอนสั่ง play
 // ด้วยการระบุ device_id ให้ชัดเจนทุกครั้ง (ไม่งั้น Spotify บางทีงงว่าจะสั่ง play ที่ไหน)
+//
+// envelope ของการยิง request (token/bearer/429/retry/log) ย้ายไป SpotifyGateway แล้ว
+// ไฟล์นี้เหลือหน้าที่แค่ประกอบ path + parse JSON ของ now-playing
 using System;
 using System.Linq;
-using System.Net;
 using System.Net.Http;
-using System.Net.Http.Headers;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 
@@ -31,8 +32,6 @@ namespace ChillWithYou_SpotifyMod
 
     internal static class SpotifyApi
     {
-        private static readonly HttpClient Http = new HttpClient();
-
         // จำ device_id ล่าสุดที่เห็นตอน poll ข้อมูลเพลง เอาไว้ใช้ตอนสั่ง play/pause
         // เพราะ Spotify เจอ "Restriction violated" บ่อยถ้าไม่ระบุ device_id ให้ชัดเจน
         private static string _lastKnownDeviceId;
@@ -40,186 +39,63 @@ namespace ChillWithYou_SpotifyMod
 
         private static string _loggedDeviceId; // device ตัวล่าสุดที่ log ไปแล้ว - กัน log ซ้ำทุกรอบ poll
 
-        // ระยะรอก่อน retry ตอนเจอ 401 ทั้งที่ token ยังดี - รวมแล้วไม่เกิน ~2 วิ
-        // ถ้ายังไม่ผ่านหลังจากนี้ ปล่อยให้ผู้เรียกไปเริ่มรอบใหม่เองดีกว่าค้างรอต่อ
-        private static readonly int[] UnauthorizedRetryDelaysMs = { 300, 600, 1000 };
-
         // cache ปกอัลบั้มตาม URL - refresh รอบใหม่ที่เพลง/ปกเดิมไม่ต้องโหลดรูปซ้ำ
         private static string _lastCoverUrl;
         private static byte[] _lastCoverBytes;
 
         // เปิดให้ SpotifyButtonsInjector เรียกใช้ตอนสั่ง play track/context จาก search results โดยตรง
-        public static async Task SendPlayBody(string path, string jsonBody)
-            => await SendAsync(HttpMethod.Put, path, jsonBody);
-
-        // รวมไว้ที่ SpotifyAuth แล้ว - มี lock กัน refresh ซ้อนกันจากหลายคลาสพร้อมกัน
-        private static Task<bool> EnsureValidTokenAsync() => SpotifyAuth.EnsureValidTokenAsync();
-
-        private static async Task<HttpResponseMessage> SendNowPlayingRequest()
-        {
-            var request = new HttpRequestMessage(HttpMethod.Get, "https://api.spotify.com/v1/me/player");
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", SpotifyAuth.AccessToken);
-            return await Http.SendAsync(request);
-        }
+        public static Task<bool> SendPlayBody(string path, string jsonBody)
+            => SpotifyGateway.SendAsync(HttpMethod.Put, path, jsonBody);
 
         // log ว่า token ที่ถืออยู่เป็นของบัญชีไหน - ใช้ไล่เคสที่ล็อกอินคนละบัญชีกับที่ตั้งใจ
         // (เช็คว่าเป็น Premium ผ่าน API ไม่ได้แล้ว Spotify ตัด field product ออกตั้งแต่รอบ ก.พ. 2026)
         public static async Task LogCurrentUser()
         {
-            if (!await EnsureValidTokenAsync()) return;
-            try
-            {
-                var request = new HttpRequestMessage(HttpMethod.Get, "https://api.spotify.com/v1/me");
-                request.Headers.Add("Authorization", $"Bearer {SpotifyAuth.AccessToken}");
-                HttpResponseMessage resp = await Http.SendAsync(request);
-                string body = await resp.Content.ReadAsStringAsync();
-                if (!resp.IsSuccessStatusCode)
-                {
-                    Plugin.Log.LogWarning($"[SpotifyApi] /me failed: {resp.StatusCode} - {body}");
-                    return;
-                }
-                JObject me = JObject.Parse(body);
-                Plugin.Log.LogInfo($"[SpotifyApi] login เป็นบัญชี: id='{me.Value<string>("id")}' " +
-                    $"name='{me.Value<string>("display_name")}'");
-            }
-            catch (Exception ex)
-            {
-                Plugin.Log.LogWarning($"[SpotifyApi] /me exception: {ex.Message}");
-            }
+            JObject me = await SpotifyGateway.GetJsonAsync("me");
+            if (me == null) return;
+            Plugin.Log.LogInfo($"[SpotifyApi] login เป็นบัญชี: id='{me.Value<string>("id")}' " +
+                $"name='{me.Value<string>("display_name")}'");
         }
 
         // คืน true เมื่อ Spotify รับคำสั่งจริง เพื่อให้ UI สลับสถานะเองได้โดยไม่ต้องยิง GET ตามหลัง
-        public static async Task<bool> PlayPause(bool isCurrentlyPlaying)
+        public static Task<bool> PlayPause(bool isCurrentlyPlaying)
         {
-            if (!await EnsureValidTokenAsync()) { Plugin.Log.LogWarning("[SpotifyApi] Not logged in"); return false; }
-
             string endpoint = isCurrentlyPlaying ? "pause" : "play";
-            string path = $"me/player/{endpoint}";
-            if (!string.IsNullOrEmpty(_lastKnownDeviceId))
-                path += $"?device_id={_lastKnownDeviceId}";
-
-            return await SendAsync(HttpMethod.Put, path, jsonBody: "{}");
+            string path = $"me/player/{endpoint}" + DeviceQuery("?");
+            return SpotifyGateway.SendAsync(HttpMethod.Put, path, jsonBody: "{}");
         }
 
-        public static async Task Next()
-        {
-            if (!await EnsureValidTokenAsync()) return;
-            string path = "me/player/next" + DeviceQuery("?");
-            await SendAsync(HttpMethod.Post, path);
-        }
+        public static Task Next() => SpotifyGateway.SendAsync(HttpMethod.Post, "me/player/next" + DeviceQuery("?"));
 
-        public static async Task Previous()
-        {
-            if (!await EnsureValidTokenAsync()) return;
-            string path = "me/player/previous" + DeviceQuery("?");
-            await SendAsync(HttpMethod.Post, path);
-        }
+        public static Task Previous() => SpotifyGateway.SendAsync(HttpMethod.Post, "me/player/previous" + DeviceQuery("?"));
 
         private static string DeviceQuery(string prefix) =>
             string.IsNullOrEmpty(_lastKnownDeviceId) ? "" : $"{prefix}device_id={_lastKnownDeviceId}";
 
         // เล่นเพลงเดียวจาก URI ตรงๆ (ใช้กับผลลัพธ์ search ประเภท track)
-        public static async Task PlayTrackUri(string trackUri)
+        public static Task PlayTrackUri(string trackUri)
         {
-            if (!await EnsureValidTokenAsync()) { Plugin.Log.LogWarning("[SpotifyApi] Not logged in"); return; }
-
-            string path = "me/player/play";
-            if (!string.IsNullOrEmpty(_lastKnownDeviceId))
-                path += $"?device_id={_lastKnownDeviceId}";
-
+            string path = "me/player/play" + DeviceQuery("?");
             string body = $"{{\"uris\":[\"{trackUri}\"]}}";
-            await SendAsync(HttpMethod.Put, path, jsonBody: body);
+            return SpotifyGateway.SendAsync(HttpMethod.Put, path, jsonBody: body);
         }
 
         // เล่นทั้ง context (album/playlist/artist) จาก URI - ใช้กับผลลัพธ์ search ประเภท album/playlist/artist
         // artist URI จะเล่นเป็น top tracks/radio ของศิลปินนั้น (พฤติกรรมมาตรฐานของ Spotify)
-        public static async Task PlayContextUri(string contextUri)
+        public static Task PlayContextUri(string contextUri)
         {
-            if (!await EnsureValidTokenAsync()) { Plugin.Log.LogWarning("[SpotifyApi] Not logged in"); return; }
-
-            string path = "me/player/play";
-            if (!string.IsNullOrEmpty(_lastKnownDeviceId))
-                path += $"?device_id={_lastKnownDeviceId}";
-
+            string path = "me/player/play" + DeviceQuery("?");
             string body = $"{{\"context_uri\":\"{contextUri}\"}}";
-            await SendAsync(HttpMethod.Put, path, jsonBody: body);
+            return SpotifyGateway.SendAsync(HttpMethod.Put, path, jsonBody: body);
         }
 
         public static async Task<SpotifyNowPlayingInfo> GetCurrentlyPlaying()
         {
-            if (SpotifyRateLimiter.IsBlocked)
-            {
-                Plugin.Log.LogInfo($"[SpotifyApi] ข้าม GetCurrentlyPlaying: ยังโดน rate limit อยู่อีก {SpotifyRateLimiter.RemainingBlock.TotalSeconds:F0} วิ");
-                return null;
-            }
-
-            if (!await EnsureValidTokenAsync())
-            {
-                Plugin.Log.LogWarning("[SpotifyApi] GetCurrentlyPlaying: not logged in / token refresh failed");
-                return null;
-            }
+            JObject obj = await SpotifyGateway.GetJsonAsync("me/player");
+            if (obj == null) return null; // blocked / ยังไม่ login / 204 / error - gateway log ให้แล้ว
 
             try
             {
-                HttpResponseMessage resp = await SendNowPlayingRequest();
-
-                // Spotify ตอบ 401 "Access token missing" เป็นครั้งคราวทั้งที่ token ยังใช้ได้จริง
-                // (ยืนยันจาก log: len=248, เหลืออายุ ~58 นาที) ไม่ refresh เพราะไม่ได้หมดอายุ
-                //
-                // เห็นชัดสุดตอนยิง /me/player ครั้งแรกหลัง resume session ซึ่งเพิ่ง refresh token มา
-                // ทั้งที่ /me ด้วย token ตัวเดียวกันผ่านปกติ - เหมือน token ใหม่ยังไม่ทันมีผลทุก endpoint
-                // retry รอบเดียวที่ 250ms เคยลองแล้วไม่พอ (ยัง 401 ซ้ำ) แต่รอบ poll ถัดไปผ่าน
-                // เลยถอยเป็นหลายรอบและรอนานขึ้นเรื่อยๆ แทน
-                for (int attempt = 1;
-                     attempt <= UnauthorizedRetryDelaysMs.Length
-                     && resp.StatusCode == HttpStatusCode.Unauthorized
-                     && SpotifyAuth.HasUsableTokenPublic;
-                     attempt++)
-                {
-                    int delay = UnauthorizedRetryDelaysMs[attempt - 1];
-                    Plugin.Log.LogInfo($"[SpotifyApi] เจอ 401 ทั้งที่ token ยังดีอยู่ - " +
-                        $"รอ {delay}ms แล้วลองใหม่ (ครั้งที่ {attempt}/{UnauthorizedRetryDelaysMs.Length})");
-                    resp.Dispose();
-                    await Task.Delay(delay);
-                    resp = await SendNowPlayingRequest();
-                    if (resp.IsSuccessStatusCode)
-                        Plugin.Log.LogInfo($"[SpotifyApi] retry ครั้งที่ {attempt} ผ่านแล้ว");
-                }
-
-                if (resp.StatusCode == (HttpStatusCode)429)
-                {
-                    SpotifyRateLimiter.ReportTooManyRequests(resp);
-                    return null;
-                }
-
-                if (resp.StatusCode == HttpStatusCode.NoContent)
-                {
-                    Plugin.Log.LogInfo("[SpotifyApi] GetCurrentlyPlaying: 204 No Content (ไม่มี active device อยู่ตอนนี้)");
-                    return null;
-                }
-
-                if (!resp.IsSuccessStatusCode)
-                {
-                    string errBody = await resp.Content.ReadAsStringAsync();
-                    Plugin.Log.LogWarning($"[SpotifyApi] GetCurrentlyPlaying failed: {resp.StatusCode} - {errBody}");
-                    // ถ้ายัง 401 อยู่หลัง retry แสดงว่าไม่ใช่อาการชั่วคราวแล้ว - log สภาพ token ไว้สืบต่อ
-                    if (resp.StatusCode == HttpStatusCode.Unauthorized)
-                        Plugin.Log.LogWarning(
-                            $"[SpotifyApi] token ตอนยิง: len={SpotifyAuth.AccessToken?.Length ?? -1}, " +
-                            $"เหลืออายุ={(SpotifyAuth.TokenExpiresAt - DateTime.UtcNow).TotalSeconds:F0}s, " +
-                            $"IsLoggedIn={SpotifyAuth.IsLoggedIn}");
-                    return null;
-                }
-
-                string json = await resp.Content.ReadAsStringAsync();
-                if (string.IsNullOrWhiteSpace(json))
-                {
-                    Plugin.Log.LogInfo("[SpotifyApi] GetCurrentlyPlaying: response ว่างเปล่า");
-                    return null;
-                }
-
-                JObject obj = JObject.Parse(json);
-
                 // เก็บ device_id ไว้ใช้ตอนสั่ง play/pause/next/prev ครั้งถัดไป
                 // ใช้ "as JObject" ก่อน เพราะถ้า field เป็น JSON null จริงๆ Newtonsoft จะคืน JValue (ไม่ใช่ C# null)
                 // แล้ว ?["key"] บน JValue จะ throw InvalidOperationException แทนที่จะคืน null เฉยๆ
@@ -251,6 +127,7 @@ namespace ChillWithYou_SpotifyMod
                     ? string.Join(", ", artists.Select(a => (string)a["name"]))
                     : null;
 
+                // ปกอัลบั้ม: โหลดผ่าน gateway แต่ cache ตาม URL - ปกเดิมไม่โหลดซ้ำ
                 byte[] thumbBytes = null;
                 string coverUrl = null;
                 if ((item["album"] as JObject)?["images"] is JArray coverImages && coverImages.Count > 0)
@@ -263,13 +140,12 @@ namespace ChillWithYou_SpotifyMod
                     }
                     else
                     {
-                        try
+                        thumbBytes = await SpotifyGateway.GetImageAsync(coverUrl);
+                        if (thumbBytes != null)
                         {
-                            thumbBytes = await Http.GetByteArrayAsync(coverUrl);
                             _lastCoverUrl = coverUrl;
                             _lastCoverBytes = thumbBytes;
                         }
-                        catch (Exception ex) { Plugin.Log.LogWarning($"[SpotifyApi] Cover download failed: {ex.Message}"); }
                     }
                 }
 
@@ -296,79 +172,9 @@ namespace ChillWithYou_SpotifyMod
             }
             catch (Exception ex)
             {
-                Plugin.Log.LogError($"[SpotifyApi] GetCurrentlyPlaying exception: {ex}");
+                Plugin.Log.LogError($"[SpotifyApi] GetCurrentlyPlaying parse exception: {ex}");
                 return null;
             }
         }
-
-        // คืน true เฉพาะตอน Spotify ตอบ 2xx - ผู้เรียกส่วนใหญ่ไม่สนผลลัพธ์ ยกเว้น PlayPause
-        private static async Task<bool> SendAsync(HttpMethod method, string path, string jsonBody = null)
-        {
-            if (SpotifyRateLimiter.IsBlocked)
-            {
-                Plugin.Log.LogInfo($"[SpotifyApi] ข้าม {method} {path}: ยังโดน rate limit อยู่อีก {SpotifyRateLimiter.RemainingBlock.TotalSeconds:F0} วิ");
-                return false;
-            }
-
-            try
-            {
-                HttpResponseMessage resp = await SendOnce(method, path, jsonBody);
-
-                // Spotify ปฏิเสธคำสั่งเป็นครั้งคราวเหมือนเราไม่ได้ล็อกอิน ทั้งที่ token ใช้ได้จริง:
-                // GET ได้ 401 "Access token missing" ส่วนคำสั่งควบคุมได้ 403 PREMIUM_REQUIRED
-                // (Spotify มองคำขอที่ไม่มี token เป็นผู้ใช้ทั่วไป ซึ่งสั่งควบคุมการเล่นไม่ได้)
-                // ยืนยันแล้วว่าไม่ใช่เรื่องบัญชี - บัญชีเป็น Premium และกดซ้ำ 2-3 ครั้งก็ติดเอง
-                // ที่ทำตรงนี้คือ retry ให้แทนผู้ใช้ ไม่ได้แก้ต้นเหตุ (อยู่ฝั่ง Spotify/HTTP stack)
-                for (int attempt = 1;
-                     attempt <= UnauthorizedRetryDelaysMs.Length && IsTransientAuthFailure(resp);
-                     attempt++)
-                {
-                    int delay = UnauthorizedRetryDelaysMs[attempt - 1];
-                    Plugin.Log.LogInfo($"[SpotifyApi] {method} {path} โดน {(int)resp.StatusCode} " +
-                        $"ทั้งที่ token ยังดีอยู่ - รอ {delay}ms แล้วลองใหม่ " +
-                        $"(ครั้งที่ {attempt}/{UnauthorizedRetryDelaysMs.Length})");
-                    resp.Dispose();
-                    await Task.Delay(delay);
-                    resp = await SendOnce(method, path, jsonBody);
-                    if (resp.IsSuccessStatusCode)
-                        Plugin.Log.LogInfo($"[SpotifyApi] {method} {path} retry ครั้งที่ {attempt} ผ่านแล้ว");
-                }
-
-                if (resp.StatusCode == (HttpStatusCode)429)
-                {
-                    SpotifyRateLimiter.ReportTooManyRequests(resp);
-                    return false;
-                }
-
-                if (!resp.IsSuccessStatusCode)
-                {
-                    string body = await resp.Content.ReadAsStringAsync();
-                    Plugin.Log.LogWarning($"[SpotifyApi] {method} {path} failed: {resp.StatusCode} - {body}");
-                    return false;
-                }
-
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Plugin.Log.LogError($"[SpotifyApi] {method} {path} exception: {ex}");
-                return false;
-            }
-        }
-
-        private static async Task<HttpResponseMessage> SendOnce(HttpMethod method, string path, string jsonBody)
-        {
-            var request = new HttpRequestMessage(method, $"https://api.spotify.com/v1/{path}");
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", SpotifyAuth.AccessToken);
-            if (jsonBody != null)
-                request.Content = new StringContent(jsonBody, System.Text.Encoding.UTF8, "application/json");
-            return await Http.SendAsync(request);
-        }
-
-        // 401/403 ที่เกิดทั้งที่ token ยังใช้ได้ = อาการชั่วคราว ไม่ใช่ token เสียหรือบัญชีไม่มีสิทธิ์
-        // เช็ค token ก่อนเสมอ ไม่งั้นเคสที่ token ตายจริงจะโดน retry วนฟรีๆ 3 รอบทุกครั้ง
-        private static bool IsTransientAuthFailure(HttpResponseMessage resp) =>
-            (resp.StatusCode == HttpStatusCode.Unauthorized || resp.StatusCode == HttpStatusCode.Forbidden)
-            && SpotifyAuth.HasUsableTokenPublic;
     }
 }

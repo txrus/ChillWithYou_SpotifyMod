@@ -1,7 +1,6 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net.Http;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 
@@ -35,10 +34,10 @@ namespace ChillWithYou_SpotifyMod
         public int TrackCount;
     }
 
+    // ยิงผ่าน SpotifyGateway ทั้งหมด (envelope token/bearer/429/retry รวมอยู่ที่นั่น)
+    // ไฟล์นี้เหลือหน้าที่แค่ประกอบ path, cache ผลลัพธ์, และ parse JSON เป็นชนิดข้อมูลข้างบน
     internal static class SpotifyWebApi
     {
-        private static readonly HttpClient Http = new HttpClient();
-
         // --- 🌟 ตัวแปรใหม่สำหรับจดจำข้อมูล (Cache) ---
         private static string _lastPlaylistId = null;
         private static PlaylistInfo _cachedPlaylistInfo = null;
@@ -54,21 +53,16 @@ namespace ChillWithYou_SpotifyMod
             _cachedMyPlaylists = null;
         }
 
-        // รวมไว้ที่ SpotifyAuth แล้ว - มี lock กัน refresh ซ้อนกันจากหลายคลาสพร้อมกัน
-        private static Task<bool> EnsureValidTokenAsync() => SpotifyAuth.EnsureValidTokenAsync();
-
         // playlistId มาจาก SpotifyNowPlayingInfo.PlaylistContextId ที่ SpotifyApi.GetCurrentlyPlaying()
         // parse ไว้ให้แล้ว (จาก /me/player call เดียวกัน) ไม่ต้องยิง endpoint แยกมาหา playlist id เอง
         public static async Task<PlaylistInfo> GetCurrentPlaylistAsync(string playlistId, int maxTracks = 10)
         {
+            // ตอนโดน rate limit คืน playlist เดิมที่ cache ไว้ ไม่ปล่อยให้ UI ว่าง
             if (SpotifyRateLimiter.IsBlocked)
             {
                 Plugin.Log.LogInfo($"[SpotifyWebApi] ข้าม GetCurrentPlaylist: ยังโดน rate limit อยู่อีก {SpotifyRateLimiter.RemainingBlock.TotalSeconds:F0} วิ");
                 return _cachedPlaylistInfo;
             }
-
-            if (!await EnsureValidTokenAsync())
-                return null;
 
             try
             {
@@ -111,12 +105,7 @@ namespace ChillWithYou_SpotifyMod
                         tracks = queueTracks;
                 }
 
-                byte[] coverBytes = null;
-                if (!string.IsNullOrEmpty(coverUrl))
-                {
-                    try { coverBytes = await Http.GetByteArrayAsync(coverUrl); }
-                    catch (Exception ex) { Plugin.Log.LogWarning($"[SpotifyWebApi] โหลดภาพปกพลาด: {ex.Message}"); }
-                }
+                byte[] coverBytes = await SpotifyGateway.GetImageAsync(coverUrl);
 
                 // 🌟 อัปเดตความจำด้วยข้อมูลใหม่ล่าสุด (เฉพาะตอน meta fetch สำเร็จเท่านั้น)
                 _lastPlaylistId = playlistId;
@@ -146,88 +135,36 @@ namespace ChillWithYou_SpotifyMod
             if (_cachedMyPlaylists != null)
                 return _cachedMyPlaylists;
 
-            if (SpotifyRateLimiter.IsBlocked)
+            JObject obj = await SpotifyGateway.GetJsonAsync($"me/playlists?limit={limit}");
+            if (obj == null) return null; // blocked / ยังไม่ login / error - gateway log ให้แล้ว
+
+            var playlists = new List<UserPlaylistInfo>();
+            if (obj["items"] is JArray items)
             {
-                Plugin.Log.LogInfo($"[SpotifyWebApi] ข้าม GetMyPlaylists: ยังโดน rate limit อยู่อีก {SpotifyRateLimiter.RemainingBlock.TotalSeconds:F0} วิ");
-                return null;
-            }
-
-            if (!await EnsureValidTokenAsync())
-                return null;
-
-            try
-            {
-                var request = new HttpRequestMessage(HttpMethod.Get,
-                    $"https://api.spotify.com/v1/me/playlists?limit={limit}");
-                request.Headers.Add("Authorization", $"Bearer {SpotifyAuth.AccessToken}");
-                HttpResponseMessage resp = await Http.SendAsync(request);
-
-                if (resp.StatusCode == (System.Net.HttpStatusCode)429)
+                foreach (JToken it in items)
                 {
-                    SpotifyRateLimiter.ReportTooManyRequests(resp);
-                    return null;
-                }
+                    if (!(it is JObject p)) continue; // Spotify ส่ง item เป็น null มาได้เป็นครั้งคราว
 
-                if (!resp.IsSuccessStatusCode)
-                {
-                    string errBody = await resp.Content.ReadAsStringAsync();
-                    Plugin.Log.LogWarning($"[SpotifyWebApi] ดึงรายชื่อ playlist พลาด (Status: {resp.StatusCode}) - {errBody}");
-                    return null;
-                }
-
-                string json = await resp.Content.ReadAsStringAsync();
-                JObject obj = JObject.Parse(json);
-
-                var playlists = new List<UserPlaylistInfo>();
-                if (obj["items"] is JArray items)
-                {
-                    foreach (JToken it in items)
+                    playlists.Add(new UserPlaylistInfo
                     {
-                        if (!(it is JObject p)) continue; // Spotify ส่ง item เป็น null มาได้เป็นครั้งคราว
-
-                        playlists.Add(new UserPlaylistInfo
-                        {
-                            Id = (string)p["id"],
-                            Name = (string)p["name"],
-                            TrackCount = (int?)(p["tracks"] as JObject)?["total"] ?? 0,
-                        });
-                    }
+                        Id = (string)p["id"],
+                        Name = (string)p["name"],
+                        TrackCount = (int?)(p["tracks"] as JObject)?["total"] ?? 0,
+                    });
                 }
+            }
 
-                _cachedMyPlaylists = playlists;
-                return playlists;
-            }
-            catch (Exception ex)
-            {
-                Plugin.Log.LogError($"[SpotifyWebApi] GetMyPlaylists exception: {ex}");
-                return null;
-            }
+            _cachedMyPlaylists = playlists;
+            return playlists;
         }
 
         // ดึงชื่อ + ปก + track list ใน call เดียวจาก /playlists/{id} (endpoint แยก /tracks โดน 403 กับ app ใหม่)
         // name == null แปลว่า fetch พลาดทั้งก้อน ให้ผู้เรียก retry รอบหน้า
         private static async Task<(string name, string coverUrl, List<PlaylistTrackInfo> tracks)> GetPlaylistFullAsync(string playlistId, int maxTracks)
         {
-            var request = new HttpRequestMessage(HttpMethod.Get,
-                $"https://api.spotify.com/v1/playlists/{playlistId}?fields=name,images,tracks.items(track(id,name,duration_ms,artists(name)))");
-            request.Headers.Add("Authorization", $"Bearer {SpotifyAuth.AccessToken}");
-            HttpResponseMessage resp = await Http.SendAsync(request);
-
-            if (resp.StatusCode == (System.Net.HttpStatusCode)429)
-            {
-                SpotifyRateLimiter.ReportTooManyRequests(resp);
-                return (null, null, null);
-            }
-
-            if (!resp.IsSuccessStatusCode)
-            {
-                string errBody = await resp.Content.ReadAsStringAsync();
-                Plugin.Log.LogWarning($"[SpotifyWebApi] ดึงข้อมูล Playlist พลาด (Status: {resp.StatusCode}) - {errBody}");
-                return (null, null, null); // null = สัญญาณว่า "พลาด" ให้ผู้เรียก retry แทนที่จะ cache ค้าง
-            }
-
-            string json = await resp.Content.ReadAsStringAsync();
-            JObject obj = JObject.Parse(json);
+            JObject obj = await SpotifyGateway.GetJsonAsync(
+                $"playlists/{playlistId}?fields=name,images,tracks.items(track(id,name,duration_ms,artists(name)))");
+            if (obj == null) return (null, null, null); // null = สัญญาณว่า "พลาด" ให้ผู้เรียก retry แทนที่จะ cache ค้าง
 
             string name = obj["name"]?.ToString();
 
@@ -300,25 +237,8 @@ namespace ChillWithYou_SpotifyMod
         // คืน null = โหลดพลาด
         private static async Task<List<PlaylistTrackInfo>> GetQueueTracksAsync(int maxTracks)
         {
-            var request = new HttpRequestMessage(HttpMethod.Get, "https://api.spotify.com/v1/me/player/queue");
-            request.Headers.Add("Authorization", $"Bearer {SpotifyAuth.AccessToken}");
-            HttpResponseMessage resp = await Http.SendAsync(request);
-
-            if (resp.StatusCode == (System.Net.HttpStatusCode)429)
-            {
-                SpotifyRateLimiter.ReportTooManyRequests(resp);
-                return null;
-            }
-
-            if (!resp.IsSuccessStatusCode)
-            {
-                string errBody = await resp.Content.ReadAsStringAsync();
-                Plugin.Log.LogWarning($"[SpotifyWebApi] ดึงคิวเพลงพลาด (Status: {resp.StatusCode}) - {errBody}");
-                return null;
-            }
-
-            string json = await resp.Content.ReadAsStringAsync();
-            JObject obj = JObject.Parse(json);
+            JObject obj = await SpotifyGateway.GetJsonAsync("me/player/queue");
+            if (obj == null) return null;
 
             var tracks = new List<PlaylistTrackInfo>();
 
