@@ -150,7 +150,7 @@ This mod was made to learn, and almost everything about it was learned from othe
 
 See the per-version history in [CHANGELOG.md](CHANGELOG.md).
 
-Latest version **v1.1.1** — fixes Spotify login failing (UI stuck on the Connect button after approving in the browser) by making the build deploy the `System.Security.Cryptography.ProtectedData.dll` dependency into `plugins`.
+Latest version **v1.1.2** — track list fixes: queue titles no longer vanish or overlap other rows, repeated songs are de-duplicated when repeat is on, and the game's own track rows now reflow below the Spotify search results.
 
 ## License
 

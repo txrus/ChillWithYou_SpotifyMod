@@ -7,7 +7,7 @@ using UnityEngine;
 
 namespace ChillWithYou_SpotifyMod
 {
-    [BepInPlugin("com.pw_txr.spotifyplayer", "Spotify Player Mod", "1.1.1")]
+    [BepInPlugin("com.pw_txr.spotifyplayer", "Spotify Player Mod", "1.1.2")]
     public class Plugin : BaseUnityPlugin
     {
         internal static ManualLogSource Log;
@@ -28,7 +28,7 @@ namespace ChillWithYou_SpotifyMod
 
             _harmony = new Harmony("com.pw_txr.spotifyplayer");
             _harmony.PatchAll(typeof(SpotifyPatches));
-            Log.LogInfo("[SpotifyMod v1.1.1] loaded.");
+            Log.LogInfo("[SpotifyMod v1.1.2] loaded.");
 
             bool resumed = await SpotifyAuth.TryResumeSessionAsync();
             Log.LogInfo(resumed ? "[Spotify] Resume session สำเร็จ" : "[Spotify] ยังไม่ได้ login");
