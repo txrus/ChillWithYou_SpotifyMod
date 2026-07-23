@@ -1,78 +1,78 @@
 # ChillWithYou Spotify Mod
 
-BepInEx mod สำหรับเกม **Chill with You: Lo-Fi Story** — เพิ่มเครื่องเล่น Spotify เข้าไปในเกม ควบคุมเพลง ค้นหา และเลือกเพลย์ลิสต์ได้โดยไม่ต้องสลับหน้าจอออกจากเกม
+A BepInEx mod for **Chill with You: Lo-Fi Story** — adds an in-game Spotify player so you can control playback, search, and pick playlists without alt-tabbing out of the game.
 
-![ตัวอย่างมอดในเกม — เครื่องเล่น Spotify และรายการเพลย์ลิสต์ใน Chill with You](assets/screenshot.png)
+![The mod in-game — the Spotify player and playlist list inside Chill with You](assets/screenshot.png)
 
-> ⚠️ **จำเป็นต้องมีบัญชี Spotify Premium** — Spotify Web API อนุญาตให้สั่งควบคุมการเล่นเพลง (play/pause/skip) เฉพาะบัญชี Premium เท่านั้น บัญชีฟรีจะล็อกอินได้แต่สั่งเล่นเพลงไม่ได้
+> ⚠️ **A Spotify Premium account is required** — the Spotify Web API only allows playback control (play/pause/skip) on Premium accounts. Free accounts can log in but can't control playback.
 
-## ฟีเจอร์
+## Features
 
-- ล็อกอิน Spotify ด้วย OAuth 2.0 (Authorization Code + PKCE) — ไม่ต้องใช้ client secret
-- จำ session ไว้ในเครื่อง (เข้ารหัสด้วย Windows DPAPI) เปิดเกมใหม่ไม่ต้องล็อกอินซ้ำ
-- ควบคุมการเล่นเพลง เล่น/หยุด/ข้าม จาก UI ในเกม
-- ค้นหาเพลงและเลือกเพลย์ลิสต์ของตัวเองได้
-- มี rate limiter กันยิง API ถี่เกินไป
+- Spotify login via OAuth 2.0 (Authorization Code + PKCE) — no client secret needed
+- Remembers your session locally (encrypted with Windows DPAPI), so you don't have to log in again on the next launch
+- Control playback — play / pause / skip — from the in-game UI
+- Search tracks and pick your own playlists
+- Built-in rate limiter to avoid hammering the API
 
-## การติดตั้ง (สำหรับผู้เล่น)
+## Installation (for players)
 
-1. ติดตั้ง [BepInEx 5.x (x64)](https://github.com/BepInEx/BepInEx/releases) ลงในโฟลเดอร์เกม แล้วเปิดเกม 1 ครั้งเพื่อให้ BepInEx สร้างโฟลเดอร์
-2. นำไฟล์ **ทั้งสอง** จาก `bin\Release\netstandard2.1\` (build เองตามขั้นตอนด้านล่าง) ไปวางใน `<โฟลเดอร์เกม>\BepInEx\plugins`:
+1. Install [BepInEx 5.x (x64)](https://github.com/BepInEx/BepInEx/releases) into the game folder, then launch the game once so BepInEx creates its folders.
+2. Put **both** files from `bin\Release\netstandard2.1\` (build them yourself using the steps below) into `<game folder>\BepInEx\plugins`:
    - `ChillWithYou_SpotifyMod.dll`
-   - `System.Security.Cryptography.ProtectedData.dll` — มอดใช้เข้ารหัส refresh token ด้วย Windows DPAPI ถ้าขาดไฟล์นี้ **ล็อกอินจะไม่สำเร็จ** (แลก token แล้ว error `Could not load file or assembly`)
-3. เปิดเกม แล้วกดปุ่มล็อกอิน Spotify ในเกม — เบราว์เซอร์จะเปิดหน้าอนุญาตของ Spotify ให้กดยืนยัน
+   - `System.Security.Cryptography.ProtectedData.dll` — the mod uses this to encrypt your refresh token with Windows DPAPI. If this file is missing, **login will fail** (the token exchange throws `Could not load file or assembly`).
+3. Launch the game and click the Spotify login button in-game — your browser opens Spotify's authorization page; approve it.
 
-## การสร้าง Spotify App (จำเป็นก่อน build)
+## Creating a Spotify App (required before building)
 
-มอดต้องใช้ **Client ID** ของคุณเองจาก Spotify Developer Dashboard:
+The mod needs your own **Client ID** from the Spotify Developer Dashboard:
 
-1. ไปที่ [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) แล้วล็อกอินด้วยบัญชี Spotify ของคุณ
-2. กด **Create app** ตั้งชื่อ/คำอธิบายอะไรก็ได้
-3. ในช่อง **Redirect URIs** ใส่ค่านี้ให้ตรงเป๊ะ (ห้ามลืม `/` ท้าย):
+1. Go to [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) and log in with your Spotify account.
+2. Click **Create app**. The name and description can be anything.
+3. In **Redirect URIs**, enter this exactly (don't forget the trailing `/`):
    ```
    http://127.0.0.1:8901/callback/
    ```
-4. เลือก API ที่ใช้เป็น **Web API** แล้วกด Save
-5. เข้าไปหน้า Settings ของแอป คัดลอก **Client ID** มาใช้กับสคริปต์ build ด้านล่าง
+4. Under "Which API/SDKs are you planning to use?", tick **Web API**, then Save.
+5. Open the app's Settings page and copy the **Client ID** to use with the build script below.
 
-> ใช้แค่ Client ID เท่านั้น **ไม่ต้องใช้ Client Secret** เพราะมอดใช้ OAuth แบบ PKCE
+> You only need the Client ID — **no Client Secret** — because the mod uses OAuth with PKCE.
 
-## Build แบบง่าย (แนะนำ)
+## Easy build (recommended)
 
-ต้องมี [.NET SDK 8.0 ขึ้นไป](https://dotnet.microsoft.com/download) (พัฒนา/ทดสอบด้วย 10.0.302) และตัวเกม (พร้อม BepInEx ติดตั้งแล้ว) จากนั้นเปิด PowerShell ในโฟลเดอร์โปรเจกต์แล้วรัน:
+You need [.NET SDK 8.0 or newer](https://dotnet.microsoft.com/download) (developed/tested with 10.0.302) and the game (with BepInEx installed). Open PowerShell in the project folder and run:
 
 ```powershell
 .\build.ps1
 ```
 
-สคริปต์จะถาม Client ID แล้ว build DLL ให้เสร็จสรรพ (ใส่ ID ผ่าน parameter ก็ได้):
+The script asks for your Client ID and builds the DLL for you (you can also pass the ID as a parameter):
 
 ```powershell
 .\build.ps1 -ClientId "your32charclientid"
 
-# ถ้าเกมไม่ได้อยู่ path เริ่มต้น ระบุเองได้:
+# If the game isn't at the default path, specify it:
 .\build.ps1 -ClientId "..." -GameDir "C:\Program Files (x86)\Steam\steamapps\common\Chill with You Lo-Fi Story"
 ```
 
-ได้ไฟล์ใน `bin\Release\netstandard2.1\` และถ้าเจอโฟลเดอร์เกม จะ copy **ทั้ง `ChillWithYou_SpotifyMod.dll` และ `System.Security.Cryptography.ProtectedData.dll`** เข้า `BepInEx\plugins` ให้อัตโนมัติ — Client ID จะถูกฝังใน DLL เท่านั้น ไฟล์ซอร์สโค้ดจะถูกคืนค่าเดิมหลัง build เสมอ
+You get files in `bin\Release\netstandard2.1\`, and if the game folder is found, **both `ChillWithYou_SpotifyMod.dll` and `System.Security.Cryptography.ProtectedData.dll`** are copied into `BepInEx\plugins` automatically — the Client ID is embedded only in the DLL, and the source file is always restored after the build.
 
-> ถ้ารันสคริปต์ไม่ได้เพราะ execution policy ให้รันด้วย `powershell -ExecutionPolicy Bypass -File .\build.ps1`
+> If the script won't run because of the execution policy, run it with `powershell -ExecutionPolicy Bypass -File .\build.ps1`
 
-## การ build เอง (ไม่ใช้สคริปต์)
+## Building manually (without the script)
 
-แก้ไฟล์ `SpotifyAuth.cs` แทนที่ `ENTER_YOUR_CLIENT_ID` ด้วย Client ID ของคุณ:
+Edit `SpotifyAuth.cs` and replace `ENTER_YOUR_CLIENT_ID` with your Client ID:
 
 ```csharp
 private const string ClientId = "ENTER_YOUR_CLIENT_ID";
 ```
 
-โปรเจกต์อ้างอิง DLL จากโฟลเดอร์เกมโดยตรง ค่าเริ่มต้นชี้ไปที่:
+The project references DLLs directly from the game folder. The default points to:
 
 ```
 F:\Program Files (x86)\Steam\steamapps\common\Chill with You Lo-Fi Story
 ```
 
-ถ้าเกมอยู่ที่อื่น ให้สร้างไฟล์ `GameDir.props` (ไฟล์นี้ไม่ถูก commit) ไว้ข้าง ๆ `.csproj`:
+If your game is elsewhere, create a `GameDir.props` file (not committed) next to the `.csproj`:
 
 ```xml
 <Project>
@@ -82,69 +82,75 @@ F:\Program Files (x86)\Steam\steamapps\common\Chill with You Lo-Fi Story
 </Project>
 ```
 
-จากนั้น:
+Then:
 
 ```
 dotnet build
 ```
 
-หลัง build สำเร็จ ทั้ง `ChillWithYou_SpotifyMod.dll` และ dependency `System.Security.Cryptography.ProtectedData.dll` จะถูก copy เข้า `BepInEx\plugins` ของเกมให้อัตโนมัติ (ถ้าโฟลเดอร์มีอยู่)
+After a successful build, both `ChillWithYou_SpotifyMod.dll` and its dependency `System.Security.Cryptography.ProtectedData.dll` are copied into the game's `BepInEx\plugins` automatically (if the folder exists).
 
-> ถ้าหาโฟลเดอร์เกมไม่เจอ (ไม่ได้ตั้ง `GameDir.props`) ต้อง copy เองจาก `bin\Release\netstandard2.1\` — อย่าลืมเอา **ทั้งสองไฟล์** ไปด้วย ไม่ใช่แค่ `ChillWithYou_SpotifyMod.dll` มิฉะนั้นล็อกอิน Spotify จะไม่สำเร็จ
+> If the game folder isn't found (no `GameDir.props`), copy the files from `bin\Release\netstandard2.1\` yourself — remember to take **both files**, not just `ChillWithYou_SpotifyMod.dll`, otherwise Spotify login will fail.
 
-## โครงสร้างโค้ดคร่าว ๆ
+## Code overview
 
-| ไฟล์ | หน้าที่ |
+| File | Purpose |
 |---|---|
-| `plugin.cs` | จุดเริ่มต้นปลั๊กอิน + MainThreadDispatcher |
+| `plugin.cs` | Plugin entry point + MainThreadDispatcher |
 | `SpotifyAuth.cs` | OAuth PKCE flow + local callback server |
-| `SpotifyTokenStore.cs` | เก็บ token ลงเครื่องแบบเข้ารหัส (DPAPI) |
-| `SpotifyWebApi.cs` / `SpotifyApi.cs` / `SpotifyApiClient.cs` | เรียก Spotify Web API |
-| `SpotifySearchApi.cs` | ค้นหาเพลง |
-| `SpotifyRateLimiter.cs` | จำกัดความถี่การเรียก API |
-| `SpotifyButtonInjector.cs` | สร้าง/ฉีด UI เครื่องเล่นเข้าไปในเกม |
-| `PlaylistSelectionUI.cs` | UI เลือกเพลย์ลิสต์ |
-| `UiSprites.cs` | สร้าง sprite/texture ของ UI ด้วยโค้ด (ไม่ต้องมีไฟล์รูปแนบ) |
-| `TrackInfo.cs` | โมเดลข้อมูลเพลงที่กำลังเล่น + helper อัปเดต UI |
+| `SpotifyTokenStore.cs` | Stores the token on disk, encrypted (DPAPI) |
+| `SpotifyWebApi.cs` / `SpotifyApi.cs` / `SpotifyApiClient.cs` | Spotify Web API calls |
+| `SpotifySearchApi.cs` | Track search |
+| `SpotifyRateLimiter.cs` | Limits API call frequency |
+| `SpotifyButtonInjector.cs` | Builds/injects the player UI into the game |
+| `PlaylistSelectionUI.cs` | Playlist selection UI |
+| `UiSprites.cs` | Builds UI sprites/textures in code (no image assets needed) |
+| `TrackInfo.cs` | Now-playing data model + UI update helpers |
 | `SpotifyPatches.cs` | Harmony patches |
 
-## ข้อจำกัดจาก Spotify Web API (Development Mode)
+## Spotify Web API limitations (Development Mode)
 
-แอปที่คุณสร้างตามขั้นตอนด้านบนจะอยู่ใน **Development Mode** ซึ่ง Spotify ตัด endpoint ออกไปหลายตัว มอดนี้จึงทำบางอย่างไม่ได้ **ไม่ใช่บั๊ก** และแก้ในโค้ดไม่ได้:
+The app you created above runs in **Development Mode**, where Spotify has removed several endpoints. As a result the mod can't do some things — **these aren't bugs** and can't be fixed in code:
 
-| ทำไม่ได้ | สาเหตุ |
+| Not possible | Reason |
 |---|---|
-| ดูรายชื่อเพลงฮิตของศิลปินก่อนกดเล่น | `/artists/{id}/top-tracks` ถูกตัด (ก.พ. 2026) — กด artist จะสั่งเล่นเลย แล้วค่อยเห็นคิวเพลงจริงจาก `/me/player/queue` |
-| กดเลือกเพลงในคิวตอนเล่นจากศิลปิน | Spotify ไม่รับ `offset` เมื่อ context เป็น artist (รองรับแค่ album/playlist) — คิวจะแสดงให้ดูได้ แต่กดข้ามไปเพลงที่ต้องการไม่ได้ ใช้ปุ่ม next แทน<br>เล่นเพลงนั้นเดี่ยวๆ ก็ทำได้ แต่จะหลุด context จน next/prev ไม่เดินตามศิลปินต่อ เลยเลือกไม่ทำ |
-| ไล่ดูอัลบั้ม *ทั้งหมด* ของศิลปิน | `/artists/{id}/albums` ถูกตัด (ก.พ. 2026) — แต่อัลบั้มที่เจอจากการค้นหายังกดเปิดดูรายชื่อเพลงได้ปกติ |
-| ดูศิลปินใกล้เคียง | `/artists/{id}/related-artists` ถูกตัด (พ.ย. 2024) |
-| เปิด Daily Mix / Discover Weekly / "This Is ..." | playlist ที่ Spotify เป็นเจ้าของ อ่านผ่าน API ไม่ได้ (พ.ย. 2024) |
-| ดู playlist ของศิลปิน | ไม่เคยมี endpoint นี้ — playlist เป็นของ *user* ไม่ใช่ของ artist |
-| ผลค้นหาเกิน 10 รายการต่อประเภท | เพดาน `limit` ลดจาก 50 เหลือ 10 (ก.พ. 2026) — มอดใช้ 5 อยู่แล้ว |
+| List an artist's top tracks before playing | `/artists/{id}/top-tracks` was removed (Feb 2026) — clicking an artist starts playback, then shows the real queue from `/me/player/queue` |
+| Pick a specific track in the queue while playing from an artist | Spotify rejects `offset` when the context is an artist (only album/playlist are supported) — the queue is display-only there; use the next button.<br>Playing that track standalone is possible but drops the context so next/prev no longer follow the artist, so it's intentionally not done |
+| Browse *all* of an artist's albums | `/artists/{id}/albums` was removed (Feb 2026) — but albums found through search can still be opened to view their track list |
+| See related artists | `/artists/{id}/related-artists` was removed (Nov 2024) |
+| Open Daily Mix / Discover Weekly / "This Is ..." | Spotify-owned playlists, no longer readable through the API (Nov 2024) |
+| See an artist's playlists | This endpoint never existed — playlists belong to a *user*, not an artist |
+| More than 10 search results per category | The `limit` cap dropped from 50 to 10 (Feb 2026) — the mod already uses 5 |
 
-สิ่งที่**ยังใช้ได้ปกติ**: ควบคุมการเล่น (play/pause/next/prev), ค้นหา, playlist ของตัวเอง, ข้อมูลเพลงที่กำลังเล่น
+What **still works normally**: playback control (play/pause/next/prev), search, your own playlists, and now-playing info.
 
-> ข้อจำกัดพวกนี้ผูกกับ Development Mode — แอปที่ได้ **Extended Quota Mode** จะไม่โดน แต่ต้องยื่นขอและผ่านการรีวิวจาก Spotify ซึ่งมอดนี้ไม่ได้ยื่น เพราะทำขึ้นเพื่อเรียนรู้/ใช้ส่วนตัว
+> These limits are tied to Development Mode — an app granted **Extended Quota Mode** isn't affected, but that requires applying and passing Spotify's review, which this mod hasn't done since it's built for learning / personal use.
 >
-> อ้างอิง: [ประกาศ พ.ย. 2024](https://developer.spotify.com/blog/2024-11-27-changes-to-the-web-api) · [migration guide ก.พ. 2026](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide)
+> References: [Nov 2024 announcement](https://developer.spotify.com/blog/2024-11-27-changes-to-the-web-api) · [Feb 2026 migration guide](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide)
 
-## ข้อจำกัดอื่น ๆ
+## Other limitations
 
-- ต้องใช้บัญชี **Spotify Premium** ในการควบคุมการเล่นเพลง
-- รองรับเฉพาะ Windows (การเก็บ token ใช้ DPAPI)
-- ในโค้ดไม่มี secret ใด ๆ — ใช้แค่ Client ID (public client แบบ PKCE) ที่คุณสร้างเองตามขั้นตอนด้านบน
-- มอดนี้ไม่มีส่วนเกี่ยวข้องกับผู้พัฒนาเกมหรือ Spotify
+- A **Spotify Premium** account is required to control playback
+- Windows only (token storage uses DPAPI)
+- There are no secrets in the code — only a Client ID (a public PKCE client) that you create yourself using the steps above
+- This mod is not affiliated with the game's developers or Spotify
 
-## ขอบคุณ
+## Acknowledgements
 
-มอดนี้ทำขึ้นเพื่อเรียนรู้ และเรียนรู้จากงานของคนอื่นเกือบทั้งหมด — ขอบคุณครับ:
+This mod was made to learn, and almost everything about it was learned from other people's work — thank you:
 
-- **fraguledust**, **Ecaphet** และ **ALMIA** — ผมแกะโค้ดมอดของสามท่านนี้เพื่อเรียนรู้วิธีทำ หลายอย่างในมอดนี้เข้าใจได้เพราะได้อ่านงานของพวกเขาก่อน
-- ทีม [**BepInEx**](https://github.com/BepInEx/BepInEx) และ [**HarmonyLib**](https://github.com/pardeike/Harmony) ที่ทำให้การ mod เกม Unity เป็นเรื่องที่คนทั่วไปเริ่มต้นได้จริง มอดนี้แทบไม่ได้ทำอะไรเองเลยนอกจากต่อยอดจากสองตัวนี้
-- **modder ในคอมมูนิตี้เกม Unity** ที่เขียนบทความ ตอบกระทู้ และเปิดซอร์สโค้ดของตัวเองไว้ให้อ่าน — เทคนิคหลายอย่างในมอดนี้ (การหา GameObject ในซีน, การฉีด UI เข้าไปในเกมที่ไม่ได้ออกแบบมาให้ต่อเติม, การ patch ด้วย Harmony) มาจากงานที่คนอื่นแกะไว้ก่อนแล้วทั้งนั้น
-- ผู้พัฒนา **Chill with You: Lo-Fi Story** ที่ทำเกมบรรยากาศดีจนอยากฟังเพลงของตัวเองในนั้น
+- **fraguledust**, **Ecaphet**, and **ALMIA** — I read through these three modders' code to learn how it's done; a lot of this mod only made sense because I got to read their work first.
+- The [**BepInEx**](https://github.com/BepInEx/BepInEx) and [**HarmonyLib**](https://github.com/pardeike/Harmony) teams, who make modding Unity games something an ordinary person can actually start doing. This mod barely does anything on its own beyond building on these two.
+- The **Unity game modding community** who write articles, answer threads, and open-source their own code — many of the techniques here (finding GameObjects in a scene, injecting UI into a game not designed for it, patching with Harmony) all come from work others figured out first.
+- The developers of **Chill with You: Lo-Fi Story**, who made a game with such a nice atmosphere that I wanted to listen to my own music inside it.
 
-> ถ้าคุณเป็นเจ้าของงานที่มอดนี้หยิบมาใช้แล้วยังไม่ถูกให้เครดิตตรงนี้ เปิด issue มาได้เลย ยินดีเพิ่มให้ครับ
+> If you own work this mod builds on and aren't credited here yet, open an issue — happy to add you.
+
+## Changelog
+
+See the per-version history in [CHANGELOG.md](CHANGELOG.md).
+
+Latest version **v1.1.1** — fixes Spotify login failing (UI stuck on the Connect button after approving in the browser) by making the build deploy the `System.Security.Cryptography.ProtectedData.dll` dependency into `plugins`.
 
 ## License
 
