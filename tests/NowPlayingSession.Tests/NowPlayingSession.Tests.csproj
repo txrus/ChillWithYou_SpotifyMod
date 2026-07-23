@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <IsPackable>false</IsPackable>
+    <!-- test project นี้ตั้งใจแยกจาก mod (netstandard2.1 + Unity refs) โดยสิ้นเชิง -
+         อ้างอิงเฉพาะ logic ล้วนของ NowPlayingSession จึงรันด้วย .NET SDK ปกติได้ ไม่ต้องมี Unity -->
+    <RootNamespace>ChillWithYou_SpotifyMod.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- link-compile เฉพาะไฟล์ logic ล้วน ไม่อ้างอิงทั้ง mod assembly (จะลาก UnityEngine มาด้วย) -->
+    <Compile Include="..\..\NowPlayingSession.cs" Link="NowPlayingSession.cs" />
+  </ItemGroup>
+
+</Project>

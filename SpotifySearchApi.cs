@@ -1,10 +1,10 @@
 ﻿// SpotifySearchApi.cs
 // ค้นหาผ่าน GET /v1/search รองรับ 4 ประเภท: track, artist, album, playlist
 // อ้างอิง: https://developer.spotify.com/documentation/web-api/reference/search
+// ยิงผ่าน SpotifyGateway (envelope token/bearer/429/retry รวมอยู่ที่นั่น) เหลือแค่ประกอบ query + parse
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net.Http;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 
@@ -52,11 +52,6 @@ namespace ChillWithYou_SpotifyMod
 
     internal static class SpotifySearchApi
     {
-        private static readonly HttpClient Http = new HttpClient();
-
-        // รวมไว้ที่ SpotifyAuth แล้ว - มี lock กัน refresh ซ้อนกันจากหลายคลาสพร้อมกัน
-        private static Task<bool> EnsureValidTokenAsync() => SpotifyAuth.EnsureValidTokenAsync();
-
         // limitPerType: จำนวนผลลัพธ์สูงสุดต่อประเภท - เพดานของ Development Mode ลดจาก 50 เหลือ 10
         // ตั้งแต่ Spotify Web API รอบ ก.พ. 2026 (ค่าที่ใช้จริงคือ 5 เลยยังไม่กระทบ)
         public static async Task<SpotifySearchResults> SearchAsync(string query, int limitPerType = 5)
@@ -66,42 +61,12 @@ namespace ChillWithYou_SpotifyMod
             if (string.IsNullOrWhiteSpace(query))
                 return results;
 
-            if (SpotifyRateLimiter.IsBlocked)
-            {
-                Plugin.Log.LogInfo($"[SpotifySearchApi] ข้าม Search: ยังโดน rate limit อยู่อีก {SpotifyRateLimiter.RemainingBlock.TotalSeconds:F0} วิ");
-                return results;
-            }
-
-            if (!await EnsureValidTokenAsync())
-            {
-                Plugin.Log.LogWarning("[SpotifySearchApi] Search: not logged in");
-                return results;
-            }
-
             try
             {
                 string encodedQuery = Uri.EscapeDataString(query);
-                string url = $"https://api.spotify.com/v1/search?q={encodedQuery}&type=track,artist,album,playlist&limit={limitPerType}";
-
-                var request = new HttpRequestMessage(HttpMethod.Get, url);
-                request.Headers.Add("Authorization", $"Bearer {SpotifyAuth.AccessToken}");
-                HttpResponseMessage resp = await Http.SendAsync(request);
-
-                if (resp.StatusCode == (System.Net.HttpStatusCode)429)
-                {
-                    SpotifyRateLimiter.ReportTooManyRequests(resp);
-                    return results;
-                }
-
-                if (!resp.IsSuccessStatusCode)
-                {
-                    string errBody = await resp.Content.ReadAsStringAsync();
-                    Plugin.Log.LogWarning($"[SpotifySearchApi] Search failed: {resp.StatusCode} - {errBody}");
-                    return results;
-                }
-
-                string json = await resp.Content.ReadAsStringAsync();
-                JObject obj = JObject.Parse(json);
+                JObject obj = await SpotifyGateway.GetJsonAsync(
+                    $"search?q={encodedQuery}&type=track,artist,album,playlist&limit={limitPerType}");
+                if (obj == null) return results; // blocked / ยังไม่ login / error - gateway log ให้แล้ว
 
                 // --- Tracks ---
                 if (obj["tracks"]?["items"] is JArray trackItems)

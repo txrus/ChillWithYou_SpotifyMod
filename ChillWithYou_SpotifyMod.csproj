@@ -20,6 +20,11 @@
 	  <Compile Remove="_archive\**" />
 	  <EmbeddedResource Remove="_archive\**" />
 	  <None Remove="_archive\**" />
+	  <!-- tests/ เป็น test project แยก (net10.0 + xUnit) ที่ link-compile เฉพาะ logic ล้วน -
+	       ห้ามให้ main mod (netstandard2.1) มา glob ไฟล์ทดสอบเข้า build -->
+	  <Compile Remove="tests\**" />
+	  <EmbeddedResource Remove="tests\**" />
+	  <None Remove="tests\**" />
 	</ItemGroup>
 
 	<ItemGroup>

@@ -42,7 +42,8 @@ namespace ChillWithYou_SpotifyMod
             new System.Collections.Generic.List<(string, Text)>();
         private static string _currentTrackId;
 
-        private static bool _lastKnownIsPlaying;
+        // สถานะการเล่น + นาฬิกา interpolate ย้ายไป NowPlayingSession แล้ว (ทดสอบได้โดยไม่พึ่ง Unity)
+        private static readonly NowPlayingSession _session = new NowPlayingSession();
 
         // จำ bytes ของปกที่แสดงอยู่ (reference เดิมจาก cache ฝั่ง SpotifyApi) กันสร้าง Texture2D ซ้ำทุกรอบ refresh
         private static byte[] _lastAppliedCoverBytes;
@@ -50,11 +51,6 @@ namespace ChillWithYou_SpotifyMod
         // ใช้ตัวเดียวร่วมกันทั้ง class - สร้าง HttpClient ใหม่ทุก request จะสะสม socket ค้าง
         private static readonly System.Net.Http.HttpClient Http = new System.Net.Http.HttpClient();
 
-        // สำหรับ interpolate progress bar เองระหว่างรอบ poll จริง (ไม่ต้องยิง API ถี่ขึ้น)
-        private static TimeSpan _syncedPosition;
-        private static TimeSpan _syncedDuration;
-        private static DateTime _syncedAtUtc;
-        private static bool _isInterpolating;
         private static bool _subscribedToTick;
         private static bool _subscribedToFocus;
         private static DateTime _lastFocusRefreshUtc = DateTime.MinValue;
@@ -432,14 +428,13 @@ namespace ChillWithYou_SpotifyMod
 
         private static async Task OnPlayPauseClicked()
         {
-            bool targetIsPlaying = !_lastKnownIsPlaying;
-            bool ok = await SpotifyApi.PlayPause(_lastKnownIsPlaying);
+            bool ok = await SpotifyApi.PlayPause(_session.IsPlaying);
 
             // สั่งสำเร็จ + มีข้อมูลเพลงอยู่แล้ว -> ไม่ต้องยิง GET ตามหลัง เพราะสิ่งเดียวที่เปลี่ยนคือ is_playing
             // ซึ่งรู้ผลอยู่แล้ว แค่สลับสถานะในเครื่องพอ (ถ้าสั่งพลาด เช่น state ไม่ตรงกับเครื่องอื่น ค่อย resync)
-            if (ok && _isInterpolating)
+            if (ok && _session.IsActive)
             {
-                Plugin.RunOnMainThread(() => ApplyLocalPlayPause(targetIsPlaying));
+                Plugin.RunOnMainThread(ApplyLocalPlayPause);
                 return;
             }
 
@@ -447,18 +442,11 @@ namespace ChillWithYou_SpotifyMod
             await RefreshNowPlaying();
         }
 
-        // สลับ play/pause ในเครื่อง: ตรึงตำแหน่งเพลง ณ ตอนนี้เป็นจุด anchor ใหม่ให้ Tick() นับต่อ/หยุดนับ
-        private static void ApplyLocalPlayPause(bool nowPlaying)
+        // สลับ play/pause ในเครื่อง: session ตรึงตำแหน่ง ณ ตอนนี้เป็น anchor ใหม่ให้ Tick() นับต่อ/หยุดนับ
+        private static void ApplyLocalPlayPause()
         {
-            if (_lastKnownIsPlaying)
-            {
-                TimeSpan pos = _syncedPosition + (DateTime.UtcNow - _syncedAtUtc);
-                if (_syncedDuration > TimeSpan.Zero && pos > _syncedDuration) pos = _syncedDuration;
-                _syncedPosition = pos;
-            }
-            _syncedAtUtc = DateTime.UtcNow;
-            _lastKnownIsPlaying = nowPlaying;
-            if (_playPauseLabel != null) _playPauseLabel.text = nowPlaying ? "||" : ">";
+            _session.TogglePlayPause(DateTime.UtcNow);
+            if (_playPauseLabel != null) _playPauseLabel.text = _session.IsPlaying ? "||" : ">";
         }
 
         private static async Task OnNextClicked()
@@ -643,7 +631,8 @@ namespace ChillWithYou_SpotifyMod
                 row.transform.SetParent(_queueList.transform, worldPositionStays: false);
                 row.AddComponent<RectTransform>();
                 LayoutElement rowLe = row.AddComponent<LayoutElement>();
-                rowLe.preferredHeight = 30f;
+                rowLe.preferredHeight = 36f; // พอสำหรับ 2 บรรทัด (title 12pt + artist 10pt) ของฟอนต์เกม
+                rowLe.minHeight = 36f;
 
                 HorizontalLayoutGroup rowHlg = row.AddComponent<HorizontalLayoutGroup>();
                 rowHlg.childForceExpandWidth = false;
@@ -678,6 +667,7 @@ namespace ChillWithYou_SpotifyMod
                 Text nameText = CreateText(nameCol.transform, t.Title ?? "-", 12, TextAnchor.MiddleLeft);
                 Text artistText = CreateText(nameCol.transform, t.Artist ?? "-", 10, TextAnchor.MiddleLeft);
                 artistText.color = TextFaint;
+                ClipRowToSingleLine(nameCol, nameText, artistText);
 
                 if (!string.IsNullOrEmpty(capturedTrackId))
                     _queueRowTitles.Add((capturedTrackId, nameText));
@@ -760,8 +750,7 @@ namespace ChillWithYou_SpotifyMod
 
             if (info == null || string.IsNullOrEmpty(info.Title))
             {
-                _lastKnownIsPlaying = false;
-                _isInterpolating = false;
+                _session.Clear();
                 if (_trackTitleText != null)
                     _trackTitleText.text = "Connect Spotify and play a song on any device to see controls";
                 if (_artistText != null) _artistText.text = "";
@@ -772,8 +761,6 @@ namespace ChillWithYou_SpotifyMod
                 UpdateQueueHighlight();
                 return;
             }
-
-            _lastKnownIsPlaying = info.IsPlaying;
 
             // highlight ชื่อเพลงที่กำลังเล่นใน queue list ให้ตรงกับเพลงปัจจุบันเสมอ
             if (_currentTrackId != info.TrackId)
@@ -787,10 +774,7 @@ namespace ChillWithYou_SpotifyMod
 
             // ตั้ง "จุด sync" ใหม่จากข้อมูลจริงที่เพิ่ง poll มา ให้ Tick() คำนวณ interpolate ต่อจากตรงนี้
             // แทนที่จะ set slider ตรงๆ ทุกครั้งที่ poll (ซึ่งจะทำให้ progress ขยับเป็นสเต็ปทุก 5 วิ)
-            _syncedPosition = info.Position;
-            _syncedDuration = info.Duration;
-            _syncedAtUtc = DateTime.UtcNow;
-            _isInterpolating = true;
+            _session.Sync(info.Position, info.Duration, info.IsPlaying, DateTime.UtcNow);
             _songEndTriggerFired = false; // เพลงใหม่มาแล้ว (หรือ resync) รีเซ็ตให้ตรวจจับเพลงจบรอบถัดไปได้อีก
             EnsureSubscribedToTick();
             EnsureSubscribedToFocus();
@@ -854,35 +838,21 @@ namespace ChillWithYou_SpotifyMod
         // (ไม่มี poll ตามเวลาแล้ว - resync เกิดตอนกดปุ่ม เพลงจบ หรือสลับหน้าต่างกลับเข้าเกม)
         private static void TickProgressBar()
         {
-            if (!_isInterpolating || _posText == null || _durText == null || _progressSlider == null)
+            if (!_session.IsActive || _posText == null || _durText == null || _progressSlider == null)
                 return;
 
-            TimeSpan displayPosition = _syncedPosition;
-            bool reachedEnd = false;
+            PlaybackFrame frame = _session.Tick(DateTime.UtcNow);
 
-            if (_lastKnownIsPlaying)
-            {
-                TimeSpan elapsed = DateTime.UtcNow - _syncedAtUtc;
-                displayPosition = _syncedPosition + elapsed;
-                if (_syncedDuration > TimeSpan.Zero && displayPosition >= _syncedDuration)
-                {
-                    displayPosition = _syncedDuration;
-                    reachedEnd = true;
-                }
-            }
-
-            _posText.text = FormatTime(displayPosition);
-            _durText.text = FormatTime(_syncedDuration);
-
-            double total = _syncedDuration.TotalSeconds;
-            _progressSlider.value = total > 0 ? (float)(displayPosition.TotalSeconds / total) : 0f;
+            _posText.text = FormatTime(frame.Position);
+            _durText.text = FormatTime(frame.Duration);
+            _progressSlider.value = frame.Fraction;
 
             // เพลงจบตามนาฬิกาเราเอง (ยังไม่ได้ยิง API เลยสักครั้งตอนนี้) -> ยิงครั้งเดียวเพื่อดึงเพลงถัดไป
             // ที่ Spotify auto-advance ไปแล้วจริงๆ ตอนนี้ ป้องกันยิงซ้ำทุกเฟรมด้วย _songEndTriggerFired
-            if (reachedEnd && !_songEndTriggerFired)
+            // (frame ยัง clamp ค้างที่ปลายเพลงทุกเฟรมจนกว่าข้อมูลเพลงใหม่จะ Sync ทับ - แสดงบาร์เต็มไว้)
+            if (frame.ReachedEnd && !_songEndTriggerFired)
             {
                 _songEndTriggerFired = true;
-                _isInterpolating = false; // หยุด interpolate ไว้ก่อน รอข้อมูลเพลงใหม่มา sync ทับ
                 SafeFireAndForget(RefreshNowPlaying());
             }
         }
@@ -1280,6 +1250,10 @@ namespace ChillWithYou_SpotifyMod
 
             LayoutRebuilder.ForceRebuildLayoutImmediate(
                 _searchResultsList.GetComponent<RectTransform>());
+            // ต้อง rebuild content ชั้นนอกด้วย ไม่งั้น section เราไม่สูงขึ้นตามผลค้นหา แล้ว track list
+            // ของเกม (ที่เป็น sibling ถัดจาก section เรา) ไม่เลื่อนลง เลยวาดทับผลค้นหา (เหมือน My Lists ทำ)
+            if (_cachedScrollRect != null)
+                LayoutRebuilder.ForceRebuildLayoutImmediate(_cachedScrollRect.content);
         }
 
         private static async Task PlayTrack(string trackId)
@@ -1402,8 +1376,8 @@ namespace ChillWithYou_SpotifyMod
             row.transform.SetParent(parent, worldPositionStays: false);
             row.AddComponent<RectTransform>();
             LayoutElement rowLe = row.AddComponent<LayoutElement>();
-            rowLe.preferredHeight = 32f;
-            rowLe.minHeight = 32f;
+            rowLe.preferredHeight = 36f; // พอสำหรับ 2 บรรทัด (name 12pt + sub 10pt) ของฟอนต์เกม
+            rowLe.minHeight = 36f;
 
             HorizontalLayoutGroup rowHlg = row.AddComponent<HorizontalLayoutGroup>();
             rowHlg.childForceExpandWidth = false;
@@ -1437,11 +1411,13 @@ namespace ChillWithYou_SpotifyMod
             nameVlg.spacing = 1f;
 
             Text titleText = CreateText(nameCol.transform, title ?? "-", 12, TextAnchor.MiddleLeft);
+            Text subText = null;
             if (!string.IsNullOrEmpty(sub))
             {
-                Text subText = CreateText(nameCol.transform, sub, 10, TextAnchor.MiddleLeft);
+                subText = CreateText(nameCol.transform, sub, 10, TextAnchor.MiddleLeft);
                 subText.color = new Color(0.65f, 0.65f, 0.65f, 1f);
             }
+            ClipRowToSingleLine(nameCol, titleText, subText);
 
             if (!string.IsNullOrEmpty(right))
                 CreateInlineText(row.transform, right, 36f);
@@ -1537,8 +1513,22 @@ namespace ChillWithYou_SpotifyMod
             text.color = Color.white;
             text.font = _arialFont;
             text.raycastTarget = false;
+            // Unity Text ซ่อนทั้งบรรทัดถ้าความสูง rect ไม่พอ (default = Truncate) - ฟอนต์ IBM Plex ของเกม
+            // สูงกว่า Arial เล็กน้อย ทำให้ title 12pt ในแถวคิว 2 บรรทัดที่ถูกบีบหลุด threshold แล้วหายทั้งบรรทัด
+            // ตั้ง Overflow ให้วาดตัวหนังสือเสมอแม้ rect เตี้ยไปนิด ดีกว่าหายไปเฉยๆ
+            text.verticalOverflow = VerticalWrapMode.Overflow;
 
             return text;
+        }
+
+        // แถวในลิสต์ (คิวเพลง / ผลค้นหา / My Lists) ต้องเป็นบรรทัดเดียวเสมอ:
+        // ชื่อเพลงยาวๆ ให้ตัดที่ขอบคอลัมน์ด้วย RectMask2D แทนการ wrap ลงบรรทัดใหม่ ซึ่งจะดันแถว
+        // ให้สูงเกิน preferredHeight แล้วไปทับแถว/ส่วนอื่นด้านล่าง (ปัญหา UI ซ้อนทับ)
+        private static void ClipRowToSingleLine(GameObject col, params Text[] lines)
+        {
+            col.AddComponent<RectMask2D>();
+            foreach (Text t in lines)
+                if (t != null) t.horizontalOverflow = HorizontalWrapMode.Overflow;
         }
     }
 }
