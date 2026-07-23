@@ -1505,6 +1505,10 @@ namespace ChillWithYou_SpotifyMod
             text.color = Color.white;
             text.font = _arialFont;
             text.raycastTarget = false;
+            // Unity Text ซ่อนทั้งบรรทัดถ้าความสูง rect ไม่พอ (default = Truncate) - ฟอนต์ IBM Plex ของเกม
+            // สูงกว่า Arial เล็กน้อย ทำให้ title 12pt ในแถวคิว 2 บรรทัดที่ถูกบีบหลุด threshold แล้วหายทั้งบรรทัด
+            // ตั้ง Overflow ให้วาดตัวหนังสือเสมอแม้ rect เตี้ยไปนิด ดีกว่าหายไปเฉยๆ
+            text.verticalOverflow = VerticalWrapMode.Overflow;
 
             return text;
         }
