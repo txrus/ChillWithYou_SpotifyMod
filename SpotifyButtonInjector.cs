@@ -467,6 +467,11 @@ namespace ChillWithYou_SpotifyMod
                 _playlistHeader.SetActive(true);
                 _queueList.SetActive(true);
                 if (_searchRow != null) _searchRow.SetActive(true);
+                // section เพิ่งสูงขึ้น (playlist header + แถบ search โผล่มาแทน connect row) ต้อง rebuild
+                // scroll content ชั้นนอกด้วย ไม่งั้นแถวเพลงของเกม (sibling ถัดจาก section เรา) ไม่เลื่อนลง
+                // แล้ววาดทับ header/แถบ search - อาการเดียวกับตอน BuildSearchResults/BuildMyPlaylistRows
+                if (_cachedScrollRect != null)
+                    LayoutRebuilder.ForceRebuildLayoutImmediate(_cachedScrollRect.content);
                 SafeFireAndForget(RefreshNowPlaying());
             });
         }

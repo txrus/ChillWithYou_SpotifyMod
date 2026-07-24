@@ -18,6 +18,9 @@
   `/me/player/queue` จะวนกลับไปต้น context เพลงเดิมจึงกลับมาอีกรอบ (เพลย์ลิสต์ 7 เพลง
   แสดง 14+ แถว) ตอนนี้ `GetQueueTracksAsync` กันซ้ำด้วย `HashSet` ของ track id แล้ว
   (ไฟล์ local ที่ไม่มี id ยังผ่านตามปกติเพราะกันซ้ำไม่ได้)
+- แก้แถวเพลงของเกมวาดทับ playlist header กับแถบ search ทันทีหลังกด Connect สำเร็จ:
+  `OnLoginSuccess` เปิดแถวพวกนี้ด้วย `SetActive(true)` โดยไม่ rebuild scroll content
+  ชั้นนอก section สูงขึ้นแต่แถวของเกมไม่เลื่อนลงตาม (root cause เดียวกับข้อถัดไป)
 - แก้รายการเพลงของเกม (Original & Special) ทับผลค้นหา Spotify: `BuildSearchResults`
   rebuild เฉพาะลิสต์ผลค้นหา ไม่ได้ rebuild scroll content ด้านนอก section ของม็อดจึงไม่ขยาย
   ตามผลลัพธ์ ตอนนี้ `ForceRebuildLayoutImmediate` ที่ `_cachedScrollRect.content` ด้วย
