@@ -231,6 +231,46 @@ namespace ChillWithYou_SpotifyMod
             }
         }
 
+        // รายชื่อเพลงของอัลบั้ม สำหรับกดอัลบั้มจากผลค้นหาแล้วดูเพลงก่อนตัดสินใจเล่น
+        // /albums/{id}/tracks ไม่ให้ภาพปกมาด้วย ผู้เรียกเลยส่ง coverUrl ที่ได้จากผลค้นหามาให้โหลดต่อ
+        // คืน null = โหลดพลาด (gateway log ให้แล้ว) -> ผู้เรียกไม่ควรล้างของเดิมบนจอทิ้ง
+        public static async Task<PlaylistInfo> GetAlbumTracksAsync(string albumId, string albumName, string coverUrl, int maxTracks = 20)
+        {
+            if (string.IsNullOrEmpty(albumId)) return null;
+
+            JObject obj = await SpotifyGateway.GetJsonAsync($"albums/{albumId}/tracks?limit={maxTracks}");
+            if (obj == null) return null;
+
+            var tracks = new List<PlaylistTrackInfo>();
+            if (obj["items"] is JArray items)
+            {
+                foreach (JToken it in items)
+                {
+                    if (!(it is JObject t)) continue; // Spotify ส่ง item เป็น null มาได้เป็นครั้งคราว
+
+                    JArray artists = t["artists"] as JArray;
+                    tracks.Add(new PlaylistTrackInfo
+                    {
+                        Id = (string)t["id"],
+                        Title = (string)t["name"],
+                        Artist = artists != null && artists.Count > 0
+                            ? string.Join(", ", artists.Select(a => (string)a["name"]))
+                            : "Unknown Artist",
+                        DurationMs = (int?)t["duration_ms"] ?? 0,
+                    });
+                }
+            }
+
+            return new PlaylistInfo
+            {
+                Id = albumId,
+                Name = albumName,
+                Tracks = tracks,
+                CoverImageBytes = await SpotifyGateway.GetImageAsync(coverUrl),
+                ContextUri = $"spotify:album:{albumId}"
+            };
+        }
+
         // ดึงเพลงปัจจุบัน + คิวถัดไปจาก /me/player/queue (ใช้ scope user-read-playback-state ที่มีอยู่แล้ว)
         // ใช้เป็น fallback เวลาอ่าน track list ของ playlist ตรงๆ ไม่ได้ (app ใหม่ใน development mode
         // โดน Spotify บล็อกทั้ง endpoint /tracks (403) และ field tracks ใน /playlists/{id} (โดนตัดเงียบๆ))
