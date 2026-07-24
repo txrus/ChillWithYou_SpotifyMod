@@ -361,6 +361,11 @@ namespace ChillWithYou_SpotifyMod
                 // (ฝั่ง SpotifyWebApi ยัง cache ข้อมูลไว้อยู่ เลยได้ของจาก cache ทันทีโดยไม่เปลือง API call เพิ่ม)
                 _lastSeenContextUri = null;
 
+                // ติดอาวุธ resync ตอน alt-tab กลับเข้าเกมตั้งแต่ inject เลย (handler กันเองว่ายังไม่ login ก็เฉยๆ)
+                // เดิม subscribe ใน ApplyNowPlaying หลัง null check -> เคสใช้งานครั้งแรก (connect ตอนยังไม่มี
+                // เพลงเล่น) ไม่เคยถึงบรรทัดนั้น พอไปเปิดเพลงใน Spotify แล้วสลับกลับมา เกมเลยไม่ resync ให้
+                EnsureSubscribedToFocus();
+
                 Plugin.Log.LogInfo("[SpotifyPatches] Spotify section injected.");
             }
             catch (Exception ex)
@@ -774,7 +779,6 @@ namespace ChillWithYou_SpotifyMod
             _session.Sync(info.Position, info.Duration, info.IsPlaying, DateTime.UtcNow);
             _songEndTriggerFired = false; // เพลงใหม่มาแล้ว (หรือ resync) รีเซ็ตให้ตรวจจับเพลงจบรอบถัดไปได้อีก
             EnsureSubscribedToTick();
-            EnsureSubscribedToFocus();
 
             if (_playPauseLabel != null) _playPauseLabel.text = info.IsPlaying ? "||" : ">";
 

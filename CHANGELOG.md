@@ -18,6 +18,10 @@
   `/me/player/queue` จะวนกลับไปต้น context เพลงเดิมจึงกลับมาอีกรอบ (เพลย์ลิสต์ 7 เพลง
   แสดง 14+ แถว) ตอนนี้ `GetQueueTracksAsync` กันซ้ำด้วย `HashSet` ของ track id แล้ว
   (ไฟล์ local ที่ไม่มี id ยังผ่านตามปกติเพราะกันซ้ำไม่ได้)
+- แก้ใช้งานครั้งแรกแล้ว UI ไม่อัพเดทเอง (ต้องกด ↻) หลังไปเปิดเพลงใน Spotify แล้วสลับกลับเข้าเกม:
+  ตัว resync ตอน alt-tab (`Application.focusChanged`) ถูก subscribe ใน `ApplyNowPlaying`
+  หลัง null check เคส connect ตอนยังไม่มีเพลงเล่นเลยไม่เคยถูกติดตั้ง ตอนนี้ subscribe
+  ตั้งแต่ inject แทน
 - แก้แถวเพลงของเกมวาดทับ playlist header กับแถบ search ทันทีหลังกด Connect สำเร็จ:
   `OnLoginSuccess` เปิดแถวพวกนี้ด้วย `SetActive(true)` โดยไม่ rebuild scroll content
   ชั้นนอก section สูงขึ้นแต่แถวของเกมไม่เลื่อนลงตาม (root cause เดียวกับข้อถัดไป)
