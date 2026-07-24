@@ -21,6 +21,7 @@
     <Compile Include="..\..\NowPlayingSession.cs" Link="NowPlayingSession.cs" />
     <Compile Include="..\..\SpotifyModels.cs" Link="SpotifyModels.cs" />
     <Compile Include="..\..\PanelViewModel.cs" Link="PanelViewModel.cs" />
+    <Compile Include="..\..\RefreshCoordinator.cs" Link="RefreshCoordinator.cs" />
   </ItemGroup>
 
 </Project>

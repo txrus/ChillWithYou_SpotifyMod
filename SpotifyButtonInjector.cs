@@ -58,9 +58,11 @@ namespace ChillWithYou_SpotifyMod
 
         private static bool _subscribedToTick;
         private static bool _subscribedToFocus;
-        private static DateTime _lastFocusRefreshUtc = DateTime.MinValue;
-        private static readonly TimeSpan FocusRefreshCooldown = TimeSpan.FromSeconds(3);
         private static bool _songEndTriggerFired;
+
+        // กฎ orchestration ของการ refresh (โหลด context เมื่อไหร่/ทางไหน, commit ตอนไหน,
+        // วงจร retry หลังสั่งเล่น, cooldown ของ focus-resync) - แยกเป็น class ล้วน ทดสอบได้
+        private static readonly RefreshCoordinator _refresh = new RefreshCoordinator();
 
         // โทนสี/ฟอนต์/ทรงปุ่มทั้งหมดย้ายไป SpotifyUiKit - ไฟล์นี้เหลือแค่ประกอบ layout + ผูก behavior
 
@@ -365,9 +367,8 @@ namespace ChillWithYou_SpotifyMod
                 _spotifySection.SetActive(true);
 
                 // UI เพิ่งถูกสร้างใหม่ทั้งชุด (เกม destroy panel เก่าทิ้งตอนปิดเมนู) -> _queueList ตัวใหม่ยังว่างอยู่
-                // ต้อง reset ตัวจำ context เพื่อบังคับให้รอบ poll ถัดไปเรียก RefreshContext มาเติมใหม่
-                // (ฝั่ง SpotifyWebApi ยัง cache ข้อมูลไว้อยู่ เลยได้ของจาก cache ทันทีโดยไม่เปลือง API call เพิ่ม)
-                _lastSeenContextUri = null;
+                // ต้อง reset ตัวจำ context เพื่อบังคับให้รอบ poll ถัดไปโหลด context มาเติมใหม่
+                _refresh.Reset();
 
                 // ติดอาวุธ resync ตอน alt-tab กลับเข้าเกมตั้งแต่ inject เลย (handler กันเองว่ายังไม่ login ก็เฉยๆ)
                 // เดิม subscribe ใน ApplyNowPlaying หลัง null check -> เคสใช้งานครั้งแรก (connect ตอนยังไม่มี
@@ -428,7 +429,7 @@ namespace ChillWithYou_SpotifyMod
         {
             string trackBefore = _vm.Current.HighlightedTrackId;
             await SpotifyApi.Previous();
-            await RefreshAfterPlay(trackBefore, _lastSeenContextUri);
+            await RefreshAfterPlay(trackBefore, _refresh.LastSeenContextUri);
         }
 
         private static async Task OnPlayPauseClicked()
@@ -458,7 +459,7 @@ namespace ChillWithYou_SpotifyMod
         {
             string trackBefore = _vm.Current.HighlightedTrackId;
             await SpotifyApi.Next();
-            await RefreshAfterPlay(trackBefore, _lastSeenContextUri);
+            await RefreshAfterPlay(trackBefore, _refresh.LastSeenContextUri);
         }
 
         private static void OnConnectClicked()
@@ -486,51 +487,34 @@ namespace ChillWithYou_SpotifyMod
             Plugin.RunOnMainThread(() => Apply(_vm.LoginFailed(error)));
         }
 
-        // เรียกจาก RefreshNowPlaying เท่านั้น เมื่อ context playlist เปลี่ยนไปจากที่จำไว้
-        // ไม่มี timer แยกสำหรับ playlist อีกต่อไป - ใช้ playlistId ที่ parse มาจาก /me/player
-        // call เดียวกันกับ now-playing เลย ไม่ต้องยิง endpoint แยก
-        private static string _lastSeenContextUri;
-
         // กดปุ่ม ↻ ที่ header: ล้าง cache แล้วดึงคิวล่าสุดของ playlist ปัจจุบันใหม่ทั้งชุด
         private static async Task ForceRefreshQueue()
         {
             if (!SpotifyAuth.IsLoggedIn) return;
             SpotifyWebApi.InvalidateCache();
-            _lastSeenContextUri = null; // บังคับให้ RefreshNowPlaying โหลด context ใหม่รอบนี้เลย
+            _refresh.InvalidateContext(); // บังคับให้ RefreshNowPlaying โหลด context ใหม่รอบนี้เลย
             await RefreshNowPlaying();
         }
 
-        // คืน true เมื่อได้รายชื่อเพลงมาจริงๆ (ให้ผู้เรียกตัดสินใจว่าจะ commit ว่าโหลดแล้วหรือรอ retry)
-        // แยกตามชนิดของ context: playlist อ่านจาก /playlists/{id} ได้ ส่วน artist/album อ่านไม่ได้แล้ว
-        // เลยถอยไปใช้คิวเพลงจาก /me/player/queue แทน (ไม่งั้นหน้า queue จะว่างทั้งที่เพลงเล่นอยู่)
-        private static async Task<bool> RefreshContext(SpotifyNowPlayingInfo info)
+        // โหลด context ตามแผนจาก RefreshCoordinator - ตรงนี้เหลือแค่ยิง API + ป้อนผลเข้า VM
+        // คืน true เมื่อได้รายชื่อเพลงมาจริงๆ (coordinator ใช้ตัดสินว่าจะ commit หรือรอ retry)
+        private static async Task<bool> ExecuteContextFetch(ContextFetchPlan plan)
         {
-            string contextUri = info?.ContextUri;
-            string playlistContextId = info?.PlaylistContextId;
-
-            if (!string.IsNullOrEmpty(contextUri) && string.IsNullOrEmpty(playlistContextId))
+            // 21 = เพลงปัจจุบัน + คิวอีก 20 ซึ่งเป็นเพดานสูงสุดที่ /me/player/queue ให้มา (ไม่มี pagination ต่อ)
+            if (plan.Kind == ContextFetchKind.Queue)
             {
-                // album: ทุกเพลงในอัลบั้มใช้ปกเดียวกันอยู่แล้ว ยืมปกของเพลงที่เล่นอยู่มาใช้เป็นปก header ได้เลย
-                // artist: ปกจะเปลี่ยนไปตามอัลบั้มของแต่ละเพลง ใช้ไม่ได้ -> ส่ง null แล้วซ่อนช่องรูปแทน
-                byte[] cover = SpotifyContext.IsArtist(contextUri) ? null : info?.ThumbnailBytes;
-                return await RefreshQueueContext(contextUri, info?.Artist, cover);
+                // ดึงคิวไม่ได้ -> ปล่อยของเดิมค้างไว้ (ไม่ป้อน VM) แล้วคืน false เพื่อให้ retry
+                PlaylistInfo queueInfo = await SpotifyWebApi.GetContextQueueAsync(
+                    plan.ContextUri, plan.DisplayName, plan.CoverBytes, maxTracks: 21);
+                if (queueInfo == null) return false;
+
+                Plugin.RunOnMainThread(() => Apply(_vm.ContextLoaded(queueInfo)));
+                return true;
             }
 
-            // 21 = เพลงปัจจุบัน + คิวอีก 20 ซึ่งเป็นเพดานสูงสุดที่ /me/player/queue ให้มา (ไม่มี pagination ต่อ)
-            PlaylistInfo playlist = await SpotifyWebApi.GetCurrentPlaylistAsync(playlistContextId, maxTracks: 21);
+            PlaylistInfo playlist = await SpotifyWebApi.GetCurrentPlaylistAsync(plan.PlaylistId, maxTracks: 21);
             Plugin.RunOnMainThread(() => Apply(_vm.ContextLoaded(playlist)));
-            return playlist != null && playlist.Id == playlistContextId && playlist.Tracks != null;
-        }
-
-        // context ที่ไม่ใช่ playlist (artist/album) - เอาคิวเพลงมาแสดงแทนรายชื่อเพลงของ context
-        // ถ้าดึงคิวไม่ได้ ปล่อยของเดิมค้างไว้แล้วคืน false เพื่อให้ retry แทนการล้างหน้าจอเป็นค่าว่าง
-        private static async Task<bool> RefreshQueueContext(string contextUri, string displayName, byte[] coverBytes)
-        {
-            PlaylistInfo queueInfo = await SpotifyWebApi.GetContextQueueAsync(contextUri, displayName, coverBytes, maxTracks: 21);
-            if (queueInfo == null) return false;
-
-            Plugin.RunOnMainThread(() => Apply(_vm.ContextLoaded(queueInfo)));
-            return true;
+            return playlist != null && playlist.Id == plan.PlaylistId && playlist.Tracks != null;
         }
 
         private static void ClearChildren(Transform parent)
@@ -551,30 +535,31 @@ namespace ChillWithYou_SpotifyMod
             // ทุกอย่างที่แตะ Unity API (Text, Image, Texture2D) ต้องรันบน main thread เท่านั้น
             Plugin.RunOnMainThread(() => ApplyNowPlaying(info));
 
-            // เช็ค playlist เปลี่ยนไหม "ต่อพ่วง" จาก call เดียวกันนี้เลย ไม่ยิง endpoint แยกอีกต่างหาก
-            // และไม่มี timer คอยเช็คเป็นระยะแล้ว จะเช็คเฉพาะตอนที่ยังไงก็ต้องยิง now-playing อยู่แล้วเท่านั้น
-            string contextUri = info?.ContextUri;
-            if (SpotifyAuth.IsLoggedIn && contextUri != _lastSeenContextUri)
+            // เช็ค context เปลี่ยนไหม "ต่อพ่วง" จาก call เดียวกันนี้เลย ไม่ยิง endpoint แยกอีกต่างหาก
+            // จะโหลดไหม/ทางไหน/จำผลยังไง เป็นกฎของ RefreshCoordinator - ตรงนี้แค่ทำตามแผน
+            ContextFetchPlan plan = _refresh.PlanContextFetch(info, SpotifyAuth.IsLoggedIn);
+            if (plan.Kind != ContextFetchKind.None)
             {
-                bool loaded = await RefreshContext(info);
-                // commit เฉพาะตอนโหลดสำเร็จ (หรือไม่มี context ให้โหลด) - ถ้าพลาดปล่อยให้รอบ poll หน้า retry เอง
-                if (loaded || string.IsNullOrEmpty(contextUri))
-                    _lastSeenContextUri = contextUri;
+                bool loaded = await ExecuteContextFetch(plan);
+                _refresh.OnContextFetchCompleted(info?.ContextUri, loaded);
             }
 
             return info;
         }
 
         // Spotify ใช้เวลาครู่หนึ่งกว่าจะสลับเพลง/context หลังรับคำสั่ง play - refresh รอบเดียวหลัง delay สั้นๆ
-        // มักยังเห็นของเก่า แล้ว UI จะค้างยาวเพราะไม่มี polling ตามเวลา จึงวนเช็คสูงสุด 4 รอบ (~1.8 วิ)
-        // และหยุดทันทีที่เห็นเพลงหรือ context เปลี่ยนไปจากตอนก่อนสั่ง
+        // มักยังเห็นของเก่า แล้ว UI จะค้างยาวเพราะไม่มี polling ตามเวลา จึงวนเช็คตามจังหวะที่
+        // RefreshCoordinator กำหนด และหยุดทันทีที่เห็นเพลงหรือ context เปลี่ยนไปจากตอนก่อนสั่ง
         private static async Task RefreshAfterPlay(string trackIdBefore, string contextUriBefore)
         {
-            for (int attempt = 0; attempt < 4; attempt++)
+            for (int attempt = 0; ; attempt++)
             {
-                await Task.Delay(attempt == 0 ? 300 : 500);
+                int? delay = RefreshCoordinator.NextRetryDelayMs(attempt);
+                if (delay == null) return;
+
+                await Task.Delay(delay.Value);
                 SpotifyNowPlayingInfo info = await RefreshNowPlaying();
-                if (info != null && (info.TrackId != trackIdBefore || info.ContextUri != contextUriBefore))
+                if (RefreshCoordinator.IsPlaySettled(info, trackIdBefore, contextUriBefore))
                     return;
             }
         }
@@ -631,10 +616,8 @@ namespace ChillWithYou_SpotifyMod
 
         private static void OnAppFocusChanged(bool hasFocus)
         {
-            if (!hasFocus || !SpotifyAuth.IsLoggedIn) return;
-            // alt-tab รัวๆ ไม่ควรกลายเป็นการยิง API รัวๆ ตาม
-            if (DateTime.UtcNow - _lastFocusRefreshUtc < FocusRefreshCooldown) return;
-            _lastFocusRefreshUtc = DateTime.UtcNow;
+            // เงื่อนไข (focus เข้า + login แล้ว + พ้น cooldown กัน alt-tab รัว) เป็นกฎของ coordinator
+            if (!_refresh.ShouldResyncOnFocus(hasFocus, SpotifyAuth.IsLoggedIn, DateTime.UtcNow)) return;
             Plugin.Log.LogInfo("[SpotifyPatches] กลับเข้าเกม - resync เพลงที่เล่นอยู่");
             SafeFireAndForget(RefreshNowPlaying());
         }
@@ -744,7 +727,7 @@ namespace ChillWithYou_SpotifyMod
             if (!SpotifyAuth.IsLoggedIn) return;
             string trackBefore = _vm.Current.HighlightedTrackId;
             await command();
-            await RefreshAfterPlay(trackBefore, _lastSeenContextUri);
+            await RefreshAfterPlay(trackBefore, _refresh.LastSeenContextUri);
         }
 
         // กดอัลบั้มจากผลค้นหา -> เอารายชื่อเพลงมาแสดงในพื้นที่คิว ให้เลือกเพลงเองได้ (ไม่เล่นทันที)
