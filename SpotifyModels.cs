@@ -50,6 +50,17 @@ namespace ChillWithYou_SpotifyMod
         public string Id;
         public string Name;
         public int TrackCount;
+        public string ImageUrl; // ปกของ playlist สำหรับรูปเล็กหน้าแถว - null เมื่อ playlist ไม่มีปก
+    }
+
+    // อัลบั้มหนึ่งของศิลปิน (GET /artists/{id}/albums) - ใช้กับรายการที่กางออกมาใต้แถวศิลปินในผลค้นหา
+    public class ArtistAlbumInfo
+    {
+        public string Id;
+        public string Name;
+        public int TrackCount;
+        public string CoverUrl;
+        public string ReleaseYear; // "2003" - null เมื่อ Spotify ไม่ส่ง release_date มา
     }
 
     public class SearchTrackResult

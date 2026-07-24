@@ -212,6 +212,64 @@ namespace ChillWithYou_SpotifyMod.Tests
             Assert.True(c.ShouldResyncOnFocus(true, true, t0.AddSeconds(3.1))); // พ้น cooldown แล้ว
         }
 
+        // กดหลายแถวติดกัน: วงจรวนเช็คของคำสั่งเก่าต้องรู้ตัวว่าตกรุ่นแล้วและเลิกยิง API ต่อ
+        [Fact]
+        public void PlayCycle_OnlyNewestCycleKeepsPolling()
+        {
+            var c = new RefreshCoordinator();
+
+            int first = c.BeginPlayCycle();
+            Assert.True(c.IsCurrentPlayCycle(first));
+
+            int second = c.BeginPlayCycle();
+            Assert.False(c.IsCurrentPlayCycle(first)); // คำสั่งเก่าเลิกวน
+            Assert.True(c.IsCurrentPlayCycle(second));
+        }
+
+        // === trigger ตอนเพลงจบ ===
+
+        private static SpotifyNowPlayingInfo At(string trackId, double positionSec, double durationSec = 180) =>
+            new SpotifyNowPlayingInfo
+            {
+                TrackId = trackId,
+                Title = "Song",
+                Position = TimeSpan.FromSeconds(positionSec),
+                Duration = TimeSpan.FromSeconds(durationSec),
+            };
+
+        // บั๊กจริง: เดิม trigger ถูกติดอาวุธใหม่ทุกครั้งที่ sync ข้อมูลเพลง พอ Spotify ยังคืนเพลงเดิม
+        // ที่ปลายเพลง (ยังสลับให้ไม่ทัน) เฟรมถัดไปก็ยิงซ้ำทันที = ยิง API รัวจนกว่าเพลงจะเปลี่ยน
+        [Fact]
+        public void SongEnd_DoesNotRearmWhileStuckAtEndOfSameTrack()
+        {
+            var c = new RefreshCoordinator();
+            c.OnNowPlayingSynced(At("t1", positionSec: 10));
+
+            Assert.True(c.ShouldRefreshOnSongEnd());  // นาฬิกาถึงปลายเพลง - ยิงได้ครั้งแรก
+            Assert.False(c.ShouldRefreshOnSongEnd()); // เฟรมถัดไปยังปลายเพลงเหมือนเดิม - ห้ามยิงซ้ำ
+
+            // ผลกลับมาเป็นเพลงเดิมที่ปลายเพลง (Spotify ยังไม่ auto-advance) - ยังห้ามยิงซ้ำ
+            c.OnNowPlayingSynced(At("t1", positionSec: 179.5));
+            Assert.False(c.ShouldRefreshOnSongEnd());
+        }
+
+        [Fact]
+        public void SongEnd_RearmsOnNewTrackOrRestart()
+        {
+            var c = new RefreshCoordinator();
+            c.OnNowPlayingSynced(At("t1", 10));
+            Assert.True(c.ShouldRefreshOnSongEnd());
+
+            c.OnNowPlayingSynced(At("t2", 0)); // Spotify สลับเพลงให้แล้ว
+            Assert.True(c.ShouldRefreshOnSongEnd());
+
+            c.OnNowPlayingSynced(At("t2", 179.9)); // เพลงเดิมยังค้างปลายเพลง
+            Assert.False(c.ShouldRefreshOnSongEnd());
+
+            c.OnNowPlayingSynced(At("t2", 5)); // ผู้ใช้ย้อนไปฟังใหม่ = รอบใหม่
+            Assert.True(c.ShouldRefreshOnSongEnd());
+        }
+
         // เคสที่ resync ไม่เกิด (focus ออก/ยังไม่ login) ต้องไม่ไปแตะนาฬิกา cooldown
         [Fact]
         public void FocusResync_DeniedChecksDoNotTouchCooldown()

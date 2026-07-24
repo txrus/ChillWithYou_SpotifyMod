@@ -19,12 +19,18 @@ namespace ChillWithYou_SpotifyMod
         // รายชื่อ playlist ของ user - cache ไว้ทั้ง session เพราะแทบไม่เปลี่ยนระหว่างเล่นเกม
         private static List<UserPlaylistInfo> _cachedMyPlaylists = null;
 
+        // รายการอัลบั้มต่อศิลปิน - กาง/หุบซ้ำในเซสชันเดียวไม่ต้องยิง API ใหม่
+        private static readonly Dictionary<string, List<ArtistAlbumInfo>> _cachedArtistAlbums =
+            new Dictionary<string, List<ArtistAlbumInfo>>();
+
+
         // ล้างความจำ playlist ล่าสุด - ใช้ตอนผู้ใช้กดปุ่ม refresh เพื่อบังคับดึงข้อมูล/คิวใหม่จริงๆ
         public static void InvalidateCache()
         {
             _lastPlaylistId = null;
             _cachedPlaylistInfo = null;
             _cachedMyPlaylists = null;
+            _cachedArtistAlbums.Clear();
         }
 
         // playlistId มาจาก SpotifyNowPlayingInfo.PlaylistContextId ที่ SpotifyApi.GetCurrentlyPlaying()
@@ -124,12 +130,70 @@ namespace ChillWithYou_SpotifyMod
                         Id = (string)p["id"],
                         Name = (string)p["name"],
                         TrackCount = (int?)(p["tracks"] as JObject)?["total"] ?? 0,
+                        // แถวโชว์รูปแค่ 32px - เอาตัวเล็กสุดที่ยังไม่ต่ำกว่า 64 พอ
+                        ImageUrl = SpotifyGateway.PickImageUrl(p["images"], minWidth: 64),
                     });
                 }
             }
 
             _cachedMyPlaylists = playlists;
             return playlists;
+        }
+
+        // รายการอัลบั้มของศิลปิน (GET /artists/{id}/albums) สำหรับกางดูใต้แถวศิลปินในผลค้นหา
+        // เพดาน limit ของ endpoint นี้คือ 10 ต่อหน้า (ลดจาก 50 รอบเดียวกับที่ /search โดนลด)
+        // ขอทีเดียว 50 จะได้ 400 กลับมา จึงไล่ทีละหน้าด้วย offset จนครบ maxAlbums หรือหมดรายการ
+        // คืน null = หน้าแรกโหลดไม่ได้ (ผู้เรียกแสดงข้อความแจ้งแทนรายการ และไม่ cache ไว้
+        // เพื่อให้กดใหม่แล้วลองอีกครั้งได้) / พลาดกลางทางใช้เท่าที่ได้มาแล้วดีกว่าทิ้งทั้งชุด
+        public static async Task<List<ArtistAlbumInfo>> GetArtistAlbumsAsync(string artistId, int maxAlbums = 50)
+        {
+            if (string.IsNullOrEmpty(artistId)) return null;
+            if (_cachedArtistAlbums.TryGetValue(artistId, out List<ArtistAlbumInfo> cached))
+                return cached;
+
+            const int PageSize = 10;
+            var albums = new List<ArtistAlbumInfo>();
+            // Spotify คืนอัลบั้มเดียวกันซ้ำหลายรายการ (คนละ market / reissue) - เอาชื่อละครั้งพอ
+            var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            for (int offset = 0; offset < maxAlbums; offset += PageSize)
+            {
+                JObject obj = await SpotifyGateway.GetJsonAsync(
+                    $"artists/{artistId}/albums?include_groups=album,single&limit={PageSize}&offset={offset}");
+                if (obj == null)
+                    return albums.Count > 0 ? albums : null;
+
+                if (!(obj["items"] is JArray items) || items.Count == 0) break;
+
+                foreach (JToken it in items)
+                {
+                    if (!(it is JObject al)) continue;
+
+                    string name = (string)al["name"];
+                    if (string.IsNullOrEmpty(name) || !seenNames.Add(name)) continue;
+
+                    string releaseDate = (string)al["release_date"];
+                    albums.Add(new ArtistAlbumInfo
+                    {
+                        Id = (string)al["id"],
+                        Name = name,
+                        TrackCount = (int?)al["total_tracks"] ?? 0,
+                        // ปกโชว์แค่ 34px ในแถว แต่ใช้ต่อเป็นปก header ตอนกดเข้าไปดูเพลงในอัลบั้มด้วย
+                        CoverUrl = SpotifyGateway.PickImageUrl(al["images"], minWidth: 160),
+                        // release_date เป็น "2003", "2003-05" หรือ "2003-05-20" ตาม precision ที่ Spotify มี
+                        ReleaseYear = releaseDate != null && releaseDate.Length >= 4
+                            ? releaseDate.Substring(0, 4)
+                            : null,
+                    });
+                }
+
+                // หน้าสุดท้ายแล้ว (ได้ไม่เต็มหน้า หรือ next เป็น null) - ไม่ต้องยิงหน้าถัดไปให้เปลือง
+                if (items.Count < PageSize || obj["next"] == null || obj["next"].Type == JTokenType.Null)
+                    break;
+            }
+
+            _cachedArtistAlbums[artistId] = albums;
+            return albums;
         }
 
         // ดึงชื่อ + ปก + track list ใน call เดียวจาก /playlists/{id} (endpoint แยก /tracks โดน 403 กับ app ใหม่)
@@ -174,8 +238,9 @@ namespace ChillWithYou_SpotifyMod
         }
 
         // สร้าง PlaylistInfo จากคิวเพลง สำหรับ context ที่ไม่ใช่ playlist (artist/album)
-        // อ่านรายชื่อเพลงของ context พวกนี้ตรงๆ ไม่ได้แล้ว (/artists/{id}/top-tracks กับ
-        // /artists/{id}/albums ถูกตัดจาก development mode ตั้งแต่รอบ ก.พ. 2026) แต่ /me/player/queue
+        // อ่านรายชื่อเพลงของ context พวกนี้ตรงๆ ไม่ได้แล้ว (/artists/{id}/top-tracks ถูกตัดจาก
+        // development mode ตั้งแต่รอบ ก.พ. 2026 - ส่วน /artists/{id}/albums ยังลองใช้อยู่ใน
+        // GetArtistAlbumsAsync และมีทางลงถ้าโดนบล็อก) แต่ /me/player/queue
         // เป็น playback endpoint ที่ไม่โดนตัด และไม่สนว่า context เป็นชนิดไหน เลยใช้แทนได้
         // ไม่ cache เพราะฝั่งผู้เรียกยิงเฉพาะตอน context เปลี่ยนอยู่แล้ว
         // คืน null = โหลดพลาด -> ผู้เรียกไม่ควร commit ว่าโหลดแล้ว จะได้ retry รอบหน้า

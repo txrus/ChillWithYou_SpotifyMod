@@ -14,6 +14,11 @@ namespace ChillWithYou_SpotifyMod
 
     internal static class SpotifySearchApi
     {
+        // ขนาดรูปที่ขอจาก Spotify: แถวผลค้นหาแสดงรูปแค่ 32px เลยเอาตัวเล็กสุดที่ยัง >= 64
+        // ยกเว้นปกอัลบั้มที่ถูกส่งต่อไปเป็นปกใหญ่ของ header ตอนกดดูเพลงในอัลบั้มด้วย
+        private const int RowThumbMinWidth = 64;
+        private const int AlbumCoverMinWidth = 160;
+
         // limitPerType: จำนวนผลลัพธ์สูงสุดต่อประเภท - เพดานของ Development Mode ลดจาก 50 เหลือ 10
         // ตั้งแต่ Spotify Web API รอบ ก.พ. 2026 (ค่าที่ใช้จริงคือ 5 เลยยังไม่กระทบ)
         public static async Task<SpotifySearchResults> SearchAsync(string query, int limitPerType = 5)
@@ -47,9 +52,8 @@ namespace ChillWithYou_SpotifyMod
                             Title = (string)track["name"],
                             Artist = artist,
                             DurationMs = (int?)track["duration_ms"] ?? 0,
-                            AlbumCoverUrl = track["album"]?["images"] is JArray trackImages && trackImages.Count > 0
-                                ? trackImages[0]?.Value<string>("url")
-                                : null,
+                            AlbumCoverUrl = SpotifyGateway.PickImageUrl(
+                                (track["album"] as JObject)?["images"], RowThumbMinWidth),
                         });
                     }
                 }
@@ -64,9 +68,7 @@ namespace ChillWithYou_SpotifyMod
                         {
                             Id = (string)a["id"],
                             Name = (string)a["name"],
-                            ImageUrl = a["images"] is JArray artistImages && artistImages.Count > 0
-                                ? artistImages[0]?.Value<string>("url")
-                                : null,
+                            ImageUrl = SpotifyGateway.PickImageUrl(a["images"], RowThumbMinWidth),
                         });
                     }
                 }
@@ -87,9 +89,7 @@ namespace ChillWithYou_SpotifyMod
                             Id = (string)al["id"],
                             Name = (string)al["name"],
                             ArtistName = artist,
-                            CoverUrl = al["images"] is JArray albumImages && albumImages.Count > 0
-                                ? albumImages[0]?.Value<string>("url")
-                                : null,
+                            CoverUrl = SpotifyGateway.PickImageUrl(al["images"], AlbumCoverMinWidth),
                         });
                     }
                 }
@@ -105,9 +105,7 @@ namespace ChillWithYou_SpotifyMod
                             Id = (string)p["id"],
                             Name = (string)p["name"],
                             OwnerName = (string)p["owner"]?["display_name"],
-                            CoverUrl = p["images"] is JArray playlistImages && playlistImages.Count > 0
-                                ? playlistImages[0]?.Value<string>("url")
-                                : null,
+                            CoverUrl = SpotifyGateway.PickImageUrl(p["images"], RowThumbMinWidth),
                         });
                     }
                 }
