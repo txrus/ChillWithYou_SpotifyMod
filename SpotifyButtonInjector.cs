@@ -10,6 +10,12 @@ namespace ChillWithYou_SpotifyMod
 {
     internal static class SpotifyButtonsInjector
     {
+        // ขนาดแถวในลิสต์: สูงพอสำหรับ 2 บรรทัด (title 12pt + sub 10pt) ของฟอนต์เกม
+        // บวกที่หายใจรอบรูปปก 34px ที่อยู่หน้าแถว
+        private const float RowHeight = 42f;
+        private const float ThumbSize = 34f;
+        private const int RowIndent = 22; // ระยะเยื้องของแถวลูก (อัลบั้มใต้ศิลปินที่กางอยู่)
+
         private static bool _injected;
         private static GameObject _spotifySection;
         private static ScrollRect _cachedScrollRect;
@@ -36,9 +42,13 @@ namespace ChillWithYou_SpotifyMod
         private static GameObject _searchResultsList;
         private static GameObject _searchRow;
 
-        // แถวใน queue list ทั้งหมด (trackId -> Text ชื่อเพลงของแถวนั้น) เก็บไว้ highlight เพลงที่กำลังเล่นอยู่
-        private static readonly System.Collections.Generic.List<(string trackId, Text title)> _queueRowTitles =
-            new System.Collections.Generic.List<(string, Text)>();
+        // ชื่อเพลง/ชื่อรายการของทุกแถวที่ render ไว้ เก็บเพื่อทาสีใหม่โดยไม่ต้อง rebuild ทั้งลิสต์
+        // (เพลงที่กำลังเล่น = เขียว / แถวในพื้นที่ผลลัพธ์ที่เพิ่งกด = เขียว)
+        // แยกสองลิสต์เพราะคิวกับพื้นที่ผลลัพธ์ rebuild คนละจังหวะกัน
+        private static readonly System.Collections.Generic.List<(string trackId, string key, Text title)> _queueRowTitles =
+            new System.Collections.Generic.List<(string, string, Text)>();
+        private static readonly System.Collections.Generic.List<(string trackId, string key, Text title)> _resultRowTitles =
+            new System.Collections.Generic.List<(string, string, Text)>();
 
         // สถานะการเล่น + นาฬิกา interpolate ย้ายไป NowPlayingSession แล้ว (ทดสอบได้โดยไม่พึ่ง Unity)
         private static readonly NowPlayingSession _session = new NowPlayingSession();
@@ -58,7 +68,6 @@ namespace ChillWithYou_SpotifyMod
 
         private static bool _subscribedToTick;
         private static bool _subscribedToFocus;
-        private static bool _songEndTriggerFired;
 
         // กฎ orchestration ของการ refresh (โหลด context เมื่อไหร่/ทางไหน, commit ตอนไหน,
         // วงจร retry หลังสั่งเล่น, cooldown ของ focus-resync) - แยกเป็น class ล้วน ทดสอบได้
@@ -552,12 +561,19 @@ namespace ChillWithYou_SpotifyMod
         // RefreshCoordinator กำหนด และหยุดทันทีที่เห็นเพลงหรือ context เปลี่ยนไปจากตอนก่อนสั่ง
         private static async Task RefreshAfterPlay(string trackIdBefore, string contextUriBefore)
         {
+            int cycle = _refresh.BeginPlayCycle();
+
             for (int attempt = 0; ; attempt++)
             {
                 int? delay = RefreshCoordinator.NextRetryDelayMs(attempt);
                 if (delay == null) return;
 
                 await Task.Delay(delay.Value);
+
+                // มีคำสั่งเล่นใหม่เข้ามาระหว่างรอ -> วงจรนี้หมดความหมาย ปล่อยให้ของใหม่วนต่อคนเดียว
+                // (ไม่งั้นกด 5 แถวติดกัน = 5 วงจรซ้อน ยิง GET /me/player รวม 20 ครั้งใน 2 วิ)
+                if (!_refresh.IsCurrentPlayCycle(cycle)) return;
+
                 SpotifyNowPlayingInfo info = await RefreshNowPlaying();
                 if (RefreshCoordinator.IsPlaySettled(info, trackIdBefore, contextUriBefore))
                     return;
@@ -585,9 +601,12 @@ namespace ChillWithYou_SpotifyMod
                 // ตั้ง "จุด sync" ใหม่จากข้อมูลจริงที่เพิ่ง poll มา ให้ Tick() คำนวณ interpolate ต่อจากตรงนี้
                 // แทนที่จะ set slider ตรงๆ ทุกครั้งที่ poll (ซึ่งจะทำให้ progress ขยับเป็นสเต็ปทุก 5 วิ)
                 _session.Sync(info.Position, info.Duration, info.IsPlaying, DateTime.UtcNow);
-                _songEndTriggerFired = false; // เพลงใหม่มาแล้ว (หรือ resync) รีเซ็ตให้ตรวจจับเพลงจบรอบถัดไปได้อีก
                 EnsureSubscribedToTick();
             }
+
+            // ติดอาวุธ trigger "เพลงจบ" ใหม่หรือยัง เป็นกฎของ coordinator (เดิมรีเซ็ตทุกครั้งที่ sync
+            // ซึ่งทำให้ปลายเพลงยิง API วนไม่หยุดจนกว่า Spotify จะสลับเพลงให้)
+            _refresh.OnNowPlayingSynced(info);
 
             Apply(_vm.NowPlayingUpdated(info));
         }
@@ -636,14 +655,12 @@ namespace ChillWithYou_SpotifyMod
             _durText.text = PanelViewModel.FormatTime(frame.Duration);
             _progressSlider.value = frame.Fraction;
 
-            // เพลงจบตามนาฬิกาเราเอง (ยังไม่ได้ยิง API เลยสักครั้งตอนนี้) -> ยิงครั้งเดียวเพื่อดึงเพลงถัดไป
-            // ที่ Spotify auto-advance ไปแล้วจริงๆ ตอนนี้ ป้องกันยิงซ้ำทุกเฟรมด้วย _songEndTriggerFired
+            // เพลงจบตามนาฬิกาเราเอง (ยังไม่ได้ยิง API เลยสักครั้งตอนนี้) -> ตามดูว่า Spotify
+            // auto-advance ไปเพลงไหน ใช้วงจรเดียวกับหลังสั่งเล่น (สูงสุด 4 ครั้ง หยุดทันทีที่เพลงเปลี่ยน)
+            // เพราะ Spotify มักสลับให้ไม่ทันในครั้งแรก - coordinator กันไม่ให้ยิงซ้ำทุกเฟรม
             // (frame ยัง clamp ค้างที่ปลายเพลงทุกเฟรมจนกว่าข้อมูลเพลงใหม่จะ Sync ทับ - แสดงบาร์เต็มไว้)
-            if (frame.ReachedEnd && !_songEndTriggerFired)
-            {
-                _songEndTriggerFired = true;
-                SafeFireAndForget(RefreshNowPlaying());
-            }
+            if (frame.ReachedEnd && _refresh.ShouldRefreshOnSongEnd())
+                SafeFireAndForget(RefreshAfterPlay(_vm.Current.HighlightedTrackId, _refresh.LastSeenContextUri));
         }
 
         private static async void SafeFireAndForget(Task task)
@@ -730,6 +747,22 @@ namespace ChillWithYou_SpotifyMod
             await RefreshAfterPlay(trackBefore, _refresh.LastSeenContextUri);
         }
 
+        // กดแถวศิลปินในผลค้นหา -> กาง/หุบรายการอัลบั้มของศิลปินคนนั้นใต้แถวเดิม
+        // VM เป็นคนถือสถานะกาง/หุบและบอกว่าต้องไป fetch ไหม (กางคนเดิมซ้ำ = หุบ ไม่ยิง API)
+        private static async Task ToggleArtistAlbums(string artistId)
+        {
+            if (!SpotifyAuth.IsLoggedIn) return;
+
+            // onClick เริ่มบน main thread และยังไม่ได้ await -> คุยกับ VM ตรงนี้ได้เลย
+            bool needsFetch = _vm.ArtistToggled(artistId);
+            Apply(_vm.Current); // ทั้งเคสหุบ และเคสกางที่โชว์ "Loading albums…" ระหว่างรอ
+            if (!needsFetch) return;
+
+            System.Collections.Generic.List<ArtistAlbumInfo> albums =
+                await SpotifyWebApi.GetArtistAlbumsAsync(artistId, maxAlbums: 50);
+            Plugin.RunOnMainThread(() => Apply(_vm.ArtistAlbumsArrived(artistId, albums)));
+        }
+
         // กดอัลบั้มจากผลค้นหา -> เอารายชื่อเพลงมาแสดงในพื้นที่คิว ให้เลือกเพลงเองได้ (ไม่เล่นทันที)
         private static async Task LoadAlbumTracks(string albumId, string albumName, string coverUrl = null)
         {
@@ -786,13 +819,10 @@ namespace ChillWithYou_SpotifyMod
                     else
                     {
                         foreach (PanelRow row in s.QueueRows)
-                            RenderRow(_queueList.transform, row);
+                            RenderRow(_queueList.transform, row, _queueRowTitles);
                     }
                 }
             }
-
-            // ทาสีทุกรอบ (ถูกกว่า rebuild มาก) - เพลงเปลี่ยนบ่อยกว่ารายชื่อคิวเยอะ
-            RecolorHighlight(s.HighlightedTrackId);
 
             if (s.ResultsRevision != _appliedResultsRev)
             {
@@ -800,6 +830,7 @@ namespace ChillWithYou_SpotifyMod
                 if (_searchResultsList != null)
                 {
                     ClearChildren(_searchResultsList.transform);
+                    _resultRowTitles.Clear();
                     foreach (PanelSection section in s.ResultsSections)
                     {
                         if (section.Label != null)
@@ -810,10 +841,14 @@ namespace ChillWithYou_SpotifyMod
                             msg.color = new Color(0.65f, 0.65f, 0.65f, 1f);
                         }
                         foreach (PanelRow row in section.Rows)
-                            RenderRow(_searchResultsList.transform, row);
+                            RenderRow(_searchResultsList.transform, row, _resultRowTitles);
                     }
                 }
             }
+
+            // ทาสีทุกรอบ (ถูกกว่า rebuild มาก) - เพลงเปลี่ยน/กดแถวใหม่ บ่อยกว่าเนื้อหาลิสต์เปลี่ยนเยอะ
+            // ต้องอยู่หลัง rebuild ทั้งสองลิสต์ ไม่งั้นแถวชุดใหม่ที่เพิ่งสร้างจะยังไม่ได้ทาสี
+            RecolorRows(s.HighlightedTrackId, s.SelectedRowKey);
 
             // โครงสร้างเปลี่ยน (แถวโผล่/หาย, list เปลี่ยน) -> ต้อง rebuild scroll content ชั้นนอกด้วย
             // ไม่งั้น section เราไม่สูงขึ้นตามเนื้อหา แล้วแถวเพลงของเกม (sibling ถัดไป) วาดทับของเรา
@@ -871,36 +906,60 @@ namespace ChillWithYou_SpotifyMod
         }
 
         // วาดแถวหนึ่งตาม PanelRow (ใช้ร่วมกันทั้งคิวเพลงและพื้นที่ผลค้นหา/My Lists)
-        private static void RenderRow(Transform parent, PanelRow rowSpec)
+        // sink = ทะเบียนแถวของลิสต์นั้น ไว้ให้ RecolorRows ทาสีทีหลังโดยไม่ต้อง rebuild
+        private static void RenderRow(Transform parent, PanelRow rowSpec,
+            System.Collections.Generic.List<(string trackId, string key, Text title)> sink)
         {
             GameObject row = new GameObject("Row");
             row.transform.SetParent(parent, worldPositionStays: false);
             row.AddComponent<RectTransform>();
             LayoutElement rowLe = row.AddComponent<LayoutElement>();
-            rowLe.preferredHeight = 36f; // พอสำหรับ 2 บรรทัด (title 12pt + sub 10pt) ของฟอนต์เกม
-            rowLe.minHeight = 36f;
+            rowLe.preferredHeight = RowHeight;
+            rowLe.minHeight = RowHeight;
 
             HorizontalLayoutGroup rowHlg = row.AddComponent<HorizontalLayoutGroup>();
             rowHlg.childForceExpandWidth = false;
+            // default ของ Unity คือ true = ยืดลูกทุกตัวเต็มความสูงแถว ซึ่งทำให้รูปปกที่ล็อกความกว้าง
+            // ไว้ 34 ถูกดึงสูงเป็น 42 กลายเป็นวงรี - คุมความสูงจาก preferred ของลูกแต่ละตัวแทน
+            rowHlg.childForceExpandHeight = false;
             rowHlg.childControlWidth = true;
             rowHlg.childControlHeight = true;
             rowHlg.spacing = 6f;
             rowHlg.childAlignment = TextAnchor.MiddleLeft;
+            // แถวลูก (อัลบั้มใต้ศิลปินที่กางอยู่) เยื้องขวาให้เห็นว่าเป็นของศิลปินแถวบน
+            if (rowSpec.Indented) rowHlg.padding = new RectOffset(RowIndent, 0, 0, 0);
 
             if (rowSpec.Action.Kind != RowActionKind.None)
             {
                 RowAction captured = rowSpec.Action;
+                string capturedKey = rowSpec.Key;
                 Image rowBg = row.AddComponent<Image>();
                 rowBg.color = new Color(0f, 0f, 0f, 0f); // โปร่งใส มีไว้รับคลิกให้ทั้งแถวเท่านั้น
                 Button rowBtn = row.AddComponent<Button>();
-                // แถวไม่มี effect ตอนชี้/กดเลย - ชื่อเพลงเปลี่ยนเป็นสีเขียวตอนเริ่มเล่นคือ feedback อยู่แล้ว
+                // แถวไม่มี effect ตอนชี้/กดเลย - ชื่อที่เปลี่ยนเป็นสีเขียวคือ feedback อยู่แล้ว
                 rowBtn.transition = Selectable.Transition.None;
                 rowBtn.targetGraphic = rowBg;
-                rowBtn.onClick.AddListener(() => Dispatch(captured));
+                rowBtn.onClick.AddListener(() =>
+                {
+                    // ทาสีแถวที่กดก่อนเลย ไม่ต้องรอผลจาก Spotify (โหลดอัลบั้ม/สลับเพลงกินเวลาเป็นวินาที)
+                    // ยกเว้นแถวที่กดแล้วแค่กาง/หุบ - ลูกศรท้ายแถวบอกสถานะให้อยู่แล้ว
+                    if (capturedKey != null && !captured.IsToggle) Apply(_vm.RowSelected(capturedKey));
+                    Dispatch(captured);
+                });
             }
 
             if (rowSpec.Index != null)
                 SpotifyUiKit.CreateInlineText(row.transform, rowSpec.Index, 18f);
+
+            // รูปเล็กหน้าแถว (ผลค้นหา/My Lists) - ช่องกับ placeholder โผล่ทันที รูปจริงตามมาทีหลัง
+            // กันที่ไว้ทุกแถวของลิสต์ที่มีรูป แม้แถวนั้นไม่มีรูปจริง (ศิลปินบางคนไม่มีรูปบน Spotify)
+            // ไม่งั้นแถวนั้นจะชิดซ้ายคนเดียวจนคอลัมน์ชื่อไม่ตรงกับแถวอื่น
+            if (rowSpec.ImageShape != RowImageShape.None)
+            {
+                Image thumb = SpotifyUiKit.CreateRowThumbnail(
+                    row.transform, ThumbSize, rowSpec.ImageShape == RowImageShape.Circle);
+                RowThumbnails.Load(thumb, rowSpec.ImageUrl);
+            }
 
             GameObject nameCol = new GameObject("NameCol");
             nameCol.transform.SetParent(row.transform, worldPositionStays: false);
@@ -914,6 +973,7 @@ namespace ChillWithYou_SpotifyMod
             nameVlg.spacing = 1f;
 
             Text titleText = SpotifyUiKit.CreateText(nameCol.transform, rowSpec.Title ?? "-", 12, TextAnchor.MiddleLeft);
+            if (rowSpec.Muted) titleText.color = SpotifyUiKit.TextFaint; // แถวข้อความสถานะ ไม่ใช่ของกดได้
             Text subText = null;
             if (!string.IsNullOrEmpty(rowSpec.Sub))
             {
@@ -923,21 +983,57 @@ namespace ChillWithYou_SpotifyMod
             }
             SpotifyUiKit.ClipRowToSingleLine(nameCol, titleText, subText);
 
-            if (!string.IsNullOrEmpty(rowSpec.Right))
-                SpotifyUiKit.CreateInlineText(row.transform, rowSpec.Right, rowSpec.Index != null ? 40f : 36f);
+            // ปุ่มเล่นวงกลมทึบ - ภาษาเดียวกับปุ่ม play หลักของ transport (">" = เล่น) เห็นแล้วรู้ทันที
+            // ว่าต่างจากลูกศรกาง/หุบที่เป็นตัวหนังสือขาวบนพื้นใส
+            if (rowSpec.PlayAction.Kind != RowActionKind.None)
+            {
+                RowAction playAction = rowSpec.PlayAction;
+                string playKey = rowSpec.Key;
+                Button playBtn = SpotifyUiKit.CreateCircleButton(row.transform, ">", 26f, solid: true);
+                Text playLabel = playBtn.GetComponentInChildren<Text>();
+                if (playLabel != null) playLabel.fontSize = 13;
+                playBtn.onClick.AddListener(() =>
+                {
+                    if (playKey != null) Apply(_vm.RowSelected(playKey));
+                    Dispatch(playAction);
+                });
+            }
 
-            // จดคู่ trackId -> Text ไว้ให้ RecolorHighlight ทาสีเพลงที่กำลังเล่น
-            if (!string.IsNullOrEmpty(rowSpec.TrackId))
-                _queueRowTitles.Add((rowSpec.TrackId, titleText));
+            if (!string.IsNullOrEmpty(rowSpec.Right))
+            {
+                Text right = SpotifyUiKit.CreateInlineText(row.transform, rowSpec.Right, rowSpec.Index != null ? 40f : 36f);
+                // ช่องขวาของแถวศิลปินไม่ใช่เวลาเพลง แต่เป็นลูกศรกาง/หุบ - ทำให้เด่นกว่าตัวเลขเวลา
+                if (rowSpec.Action.Kind == RowActionKind.ToggleArtistAlbums)
+                {
+                    right.fontSize = 16;
+                    right.fontStyle = FontStyle.Bold;
+                    right.color = Color.white;
+                }
+            }
+
+            // จดไว้ให้ RecolorRows ทาสีทีหลัง (แถวข้อความสถานะไม่นับ - สีของมันคงที่)
+            if (!rowSpec.Muted && (!string.IsNullOrEmpty(rowSpec.TrackId) || !string.IsNullOrEmpty(rowSpec.Key)))
+                sink.Add((rowSpec.TrackId, rowSpec.Key, titleText));
         }
 
-        // ทาสีชื่อเพลงที่ trackId ตรงกับเพลงที่กำลังเล่นเป็นเขียว Spotify ส่วนเพลงอื่นคืนสีขาวปกติ
-        private static void RecolorHighlight(string highlightedTrackId)
+        // ทาสีเขียว Spotify ให้แถวที่ "กำลังเล่นอยู่" หรือ "เพิ่งกด" ส่วนแถวอื่นคืนสีขาวปกติ
+        // (แถวที่เพิ่งกดใช้สีเดียวกันโดยตั้งใจ - สิ่งที่กดคือสิ่งที่กำลังจะเล่น/กำลังโหลดให้)
+        private static void RecolorRows(string highlightedTrackId, string selectedKey)
         {
-            foreach (var (trackId, title) in _queueRowTitles)
+            Recolor(_queueRowTitles, highlightedTrackId, selectedKey);
+            Recolor(_resultRowTitles, highlightedTrackId, selectedKey);
+        }
+
+        private static void Recolor(
+            System.Collections.Generic.List<(string trackId, string key, Text title)> rows,
+            string highlightedTrackId, string selectedKey)
+        {
+            foreach (var (trackId, key, title) in rows)
             {
                 if (title == null) continue; // แถวโดน destroy ไปแล้ว (Unity เทียบ null ได้กับ destroyed object)
-                title.color = (!string.IsNullOrEmpty(highlightedTrackId) && trackId == highlightedTrackId)
+                bool active = (!string.IsNullOrEmpty(highlightedTrackId) && trackId == highlightedTrackId)
+                           || (!string.IsNullOrEmpty(selectedKey) && key == selectedKey);
+                title.color = active
                     ? SpotifyUiKit.ButtonActive // เขียว Spotify ตัวเดียวกับ progress bar
                     : Color.white;
             }
@@ -959,6 +1055,9 @@ namespace ChillWithYou_SpotifyMod
                     break;
                 case RowActionKind.LoadAlbum:
                     SafeFireAndForget(LoadAlbumTracks(action.AlbumId, action.AlbumName, action.AlbumCoverUrl));
+                    break;
+                case RowActionKind.ToggleArtistAlbums:
+                    SafeFireAndForget(ToggleArtistAlbums(action.ArtistId));
                     break;
             }
         }

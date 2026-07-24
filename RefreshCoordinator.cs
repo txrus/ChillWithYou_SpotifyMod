@@ -108,6 +108,51 @@ namespace ChillWithYou_SpotifyMod
         public static int? NextRetryDelayMs(int attempt) =>
             attempt >= 0 && attempt < PlayRetryDelaysMs.Length ? PlayRetryDelaysMs[attempt] : (int?)null;
 
+        // เลขรอบของคำสั่งเล่นล่าสุด - กันวงจรวนเช็คซ้อนกัน: ผู้เล่นกดหลายแถวติดๆ กัน (กดผิด
+        // แล้วกดใหม่ทันที เป็นเรื่องปกติ) เดิมได้วงจรละ 4 GET ซ้อนกันทุกครั้งที่กด ทั้งที่คำสั่งเก่า
+        // ไม่มีความหมายอีกแล้ว - คำสั่งใหม่ทำให้ของเก่าเลิกวนทันที
+        private int _playCycle;
+
+        public int BeginPlayCycle() => ++_playCycle;
+
+        public bool IsCurrentPlayCycle(int cycle) => cycle == _playCycle;
+
+        // === trigger ตอนนาฬิกาในเครื่องเดินถึงปลายเพลง ===
+
+        private bool _songEndFired;
+        private string _lastSyncedTrackId;
+
+        // เพลงเดิมที่ position ยังห่างปลายเพลงเกินเท่านี้ = ผู้ใช้ย้อนกลับไปฟังใหม่/seek ถอยหลัง
+        // ถือว่าเป็นการเล่นรอบใหม่ ติดอาวุธ trigger ได้อีกครั้ง
+        private static readonly TimeSpan SongEndRearmMargin = TimeSpan.FromSeconds(2);
+
+        // นาฬิกาเดินถึงปลายเพลงแล้ว - ควรยิง refresh เพื่อดึงเพลงถัดไปไหม (ยิงได้ครั้งเดียวต่อเพลง)
+        public bool ShouldRefreshOnSongEnd()
+        {
+            if (_songEndFired) return false;
+            _songEndFired = true;
+            return true;
+        }
+
+        // ข้อมูลเพลงรอบใหม่มาถึงและ sync เข้านาฬิกาแล้ว - ตัดสินว่าติดอาวุธ trigger ใหม่ได้หรือยัง
+        // ห้ามติดอาวุธใหม่เมื่อ Spotify ยังคืนเพลงเดิมที่ปลายเพลงอยู่ (ยังสลับให้ไม่ทัน) ไม่งั้น
+        // เฟรมถัดไปจะยิง refresh อีกทันทีวนไปเรื่อยๆ = ยิง API รัวจนกว่า Spotify จะเปลี่ยนเพลงให้
+        public void OnNowPlayingSynced(SpotifyNowPlayingInfo info)
+        {
+            if (info == null)
+            {
+                _lastSyncedTrackId = null;
+                _songEndFired = false;
+                return;
+            }
+
+            bool trackChanged = info.TrackId != _lastSyncedTrackId;
+            _lastSyncedTrackId = info.TrackId;
+
+            if (trackChanged || info.Duration - info.Position > SongEndRearmMargin)
+                _songEndFired = false;
+        }
+
         // Spotify รับคำสั่งไปแล้วจริงไหม: เห็นเพลงหรือ context เปลี่ยนไปจากตอนก่อนสั่ง = จบ
         public static bool IsPlaySettled(SpotifyNowPlayingInfo info, string trackIdBefore, string contextUriBefore) =>
             info != null && (info.TrackId != trackIdBefore || info.ContextUri != contextUriBefore);

@@ -107,6 +107,46 @@ namespace ChillWithYou_SpotifyMod
                 if (t != null) t.horizontalOverflow = HorizontalWrapMode.Overflow;
         }
 
+        // ช่องรูปเล็กหน้าแถวในลิสต์ (ปกอัลบั้ม/ปก playlist/รูปศิลปิน)
+        // ตัวกรอบเป็น Mask ทรงโค้ง (วงกลมสำหรับศิลปิน / มุมมน 6px สำหรับปกสี่เหลี่ยม) และทำหน้าที่
+        // เป็น placeholder สีเข้มไปในตัว - รูปจริงเป็นลูกที่ถูกครอบ ผู้เรียกเอา Image ที่คืนไปใส่ sprite เอง
+        // (โหลดรูปเป็น async: แถวอาจถูก destroy ไปก่อนรูปมาถึง ผู้เรียกต้องเช็ค null ตอนใส่ sprite)
+        public static Image CreateRowThumbnail(Transform parent, float size, bool circle)
+        {
+            GameObject frame = new GameObject("Thumb");
+            frame.transform.SetParent(parent, worldPositionStays: false);
+            frame.AddComponent<RectTransform>();
+            LayoutElement le = frame.AddComponent<LayoutElement>();
+            le.preferredWidth = size; le.minWidth = size;
+            le.preferredHeight = size; le.minHeight = size;
+            // ต้องล็อกทั้งสองแกน ไม่งั้น layout ของแถวยืดรูปตามความสูงแถวจนกลายเป็นวงรี
+            le.flexibleWidth = 0f; le.flexibleHeight = 0f;
+
+            Image shape = frame.AddComponent<Image>();
+            shape.sprite = circle ? UiSprites.Circle : UiSprites.Rounded;
+            shape.preserveAspect = true;
+            if (!circle) shape.type = Image.Type.Sliced; // มุมโค้งคงที่ 6px ไม่ยืดตามขนาด
+            shape.color = CoverPlaceholder;
+            shape.raycastTarget = false;
+
+            Mask mask = frame.AddComponent<Mask>();
+            mask.showMaskGraphic = true; // ตัวกรอบคือ placeholder ด้วย ต้องวาดตอนยังไม่มีรูป
+
+            GameObject picGo = new GameObject("Pic");
+            picGo.transform.SetParent(frame.transform, worldPositionStays: false);
+            RectTransform picRt = picGo.AddComponent<RectTransform>();
+            picRt.anchorMin = Vector2.zero;
+            picRt.anchorMax = Vector2.one;
+            picRt.sizeDelta = Vector2.zero;
+
+            Image pic = picGo.AddComponent<Image>();
+            pic.preserveAspect = true;
+            pic.raycastTarget = false; // คลิกต้องทะลุไปโดนพื้นของทั้งแถว
+            pic.color = new Color(1f, 1f, 1f, 0f); // ยังไม่มีรูป - โปร่งใสให้เห็น placeholder ข้างหลัง
+
+            return pic;
+        }
+
         // ปุ่มวงกลมภาษาเดียวกับปุ่มไอคอนของเกม:
         // solid = วงกลมขาวทึบ + glyph เข้ม (ปุ่มหลักอย่าง play/pause กลาง transport)
         // ไม่ solid = วงแหวนขอบขาว พื้นใส ชี้/กดแล้วมีวงกลมขาวจางโผล่ข้างใน

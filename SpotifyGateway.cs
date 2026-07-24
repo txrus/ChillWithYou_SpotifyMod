@@ -58,6 +58,34 @@ namespace ChillWithYou_SpotifyMod
             catch (Exception ex) { Plugin.Log.LogWarning($"[SpotifyGateway] image download failed: {ex.Message}"); return null; }
         }
 
+        // เลือก URL รูปที่เล็กที่สุดแต่ยังไม่ต่ำกว่า minWidth จาก array "images" ของ Spotify
+        // (เรียงใหญ่ -> เล็ก ปกติได้ 640/300/64) - รูปเล็กหน้าแถวกว้างแค่ 32px การหยิบ 640px
+        // มาใช้แปลว่าเสีย texture 1.6MB ต่อแถว ซึ่งแพงมากเมื่อผลค้นหามี 20 แถว
+        // คืนรูปที่เล็กที่สุดที่มีเมื่อไม่มีตัวไหนถึง minWidth และคืน null เมื่อไม่มีรูปเลย
+        public static string PickImageUrl(JToken images, int minWidth)
+        {
+            if (!(images is JArray arr) || arr.Count == 0) return null;
+
+            string best = null;
+            int bestWidth = int.MaxValue;
+            string smallest = null;
+            int smallestWidth = int.MaxValue;
+
+            foreach (JToken img in arr)
+            {
+                string url = img?.Value<string>("url");
+                if (string.IsNullOrEmpty(url)) continue;
+
+                // width เป็น null ได้ (ปก mosaic ของ playlist บางอัน) - ถือว่าใหญ่พอไว้ก่อน
+                int width = img.Value<int?>("width") ?? int.MaxValue;
+
+                if (width <= smallestWidth) { smallestWidth = width; smallest = url; }
+                if (width >= minWidth && width <= bestWidth) { bestWidth = width; best = url; }
+            }
+
+            return best ?? smallest;
+        }
+
         // หัวใจของ envelope: คืน HttpResponseMessage 2xx ที่ผ่าน retry แล้ว หรือ null เมื่อ
         // blocked / ยังไม่ login / 429 (report แล้ว) / non-2xx (log แล้ว) / exception
         // ผู้เรียกที่ได้ resp non-null กลับไปรับผิดชอบ Dispose เอง

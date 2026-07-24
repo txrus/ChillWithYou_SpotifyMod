@@ -284,9 +284,36 @@ namespace ChillWithYou_SpotifyMod.Tests
 
             Assert.Equal(RowActionKind.PlayTrack, s.ResultsSections[0].Rows[0].Action.Kind);
             Assert.Equal("1:01", s.ResultsSections[0].Rows[0].Right);
-            Assert.Equal("spotify:artist:a1", s.ResultsSections[1].Rows[0].Action.ContextUri);
+            // แถวศิลปินกดแล้วกางอัลบั้ม ส่วนการสั่งเล่นศิลปินย้ายไปอยู่ที่ปุ่มเล่นท้ายแถว
+            Assert.Equal(RowActionKind.ToggleArtistAlbums, s.ResultsSections[1].Rows[0].Action.Kind);
+            Assert.Equal("a1", s.ResultsSections[1].Rows[0].Action.ArtistId);
+            Assert.Equal("spotify:artist:a1", s.ResultsSections[1].Rows[0].PlayAction.ContextUri);
             Assert.Equal(RowActionKind.LoadAlbum, s.ResultsSections[2].Rows[0].Action.Kind);
+            Assert.Equal("spotify:album:al1", s.ResultsSections[2].Rows[0].PlayAction.ContextUri);
+            // playlist ไม่มีการกาง - กดแถวแล้วสั่งเล่นทั้งชุดไปเลย
+            Assert.Equal(RowActionKind.PlayContext, s.ResultsSections[3].Rows[0].Action.Kind);
             Assert.Equal("spotify:playlist:p1", s.ResultsSections[3].Rows[0].Action.ContextUri);
+            Assert.Null(s.ResultsSections[3].Rows[0].Right); // ไม่มีลูกศรกาง/หุบ
+        }
+
+        // แถวที่กดแล้วแค่กาง/หุบไม่ต้องทาสีค้าง (ลูกศรบอกสถานะแล้ว) ส่วนปุ่มเล่นต้องมีคีย์ให้ทา
+        [Fact]
+        public void ToggleRows_AreNotHighlightedButCarryKeyForPlayButton()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            PanelState s = vm.SearchResultsArrived(SomeResults());
+
+            PanelRow artist = s.ResultsSections[1].Rows[0];
+            PanelRow playlist = s.ResultsSections[3].Rows[0];
+
+            Assert.True(artist.Action.IsToggle);
+            Assert.False(artist.PlayAction.IsToggle);
+            Assert.Equal("artist:a1", artist.Key);
+
+            // playlist กดแล้วสั่งเล่นจริง -> ต้องทาสีค้างได้
+            Assert.False(playlist.Action.IsToggle);
+            Assert.Equal("playlist:p1", playlist.Key);
         }
 
         [Fact]
@@ -299,6 +326,160 @@ namespace ChillWithYou_SpotifyMod.Tests
 
             Assert.Equal(ResultsMode.Empty, s.ResultsMode);
             Assert.Empty(s.ResultsSections);
+        }
+
+        // รูปปกของแต่ละหมวดต้องไหลจากผลค้นหาไปถึงแถวครบ - แถวศิลปินขอทรงวงกลม ที่เหลือสี่เหลี่ยมมน
+        [Fact]
+        public void SearchResultsArrived_CarriesCoverImageUrls()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            var results = new SpotifySearchResults
+            {
+                Tracks = { new SearchTrackResult { Id = "t1", Title = "Song", Artist = "A", AlbumCoverUrl = "track.jpg" } },
+                Artists = { new SearchArtistResult { Id = "a1", Name = "Band", ImageUrl = "artist.jpg" } },
+                Albums = { new SearchAlbumResult { Id = "al1", Name = "Album", ArtistName = "A", CoverUrl = "album.jpg" } },
+                Playlists = { new SearchPlaylistResult { Id = "p1", Name = "List", OwnerName = "O", CoverUrl = "list.jpg" } },
+            };
+            PanelState s = vm.SearchResultsArrived(results);
+
+            Assert.Equal("track.jpg", s.ResultsSections[0].Rows[0].ImageUrl);
+            Assert.Equal("artist.jpg", s.ResultsSections[1].Rows[0].ImageUrl);
+            Assert.Equal("album.jpg", s.ResultsSections[2].Rows[0].ImageUrl);
+            Assert.Equal("list.jpg", s.ResultsSections[3].Rows[0].ImageUrl);
+
+            Assert.Equal(RowImageShape.Circle, s.ResultsSections[1].Rows[0].ImageShape);
+            Assert.Equal(RowImageShape.Square, s.ResultsSections[0].Rows[0].ImageShape);
+            Assert.Equal(RowImageShape.Square, s.ResultsSections[2].Rows[0].ImageShape);
+            Assert.Equal(RowImageShape.Square, s.ResultsSections[3].Rows[0].ImageShape);
+        }
+
+        // playlist ที่ไม่มีปก (Spotify คืน images ว่าง) ต้องได้ ImageUrl เป็น null
+        // เพื่อให้ renderer ข้ามช่องรูปไปเลย ไม่ใช่ทิ้งกล่องเปล่าไว้หน้าแถว
+        [Fact]
+        public void SearchResultsArrived_NoCover_LeavesImageUrlNull()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            var results = new SpotifySearchResults
+            {
+                Playlists = { new SearchPlaylistResult { Id = "p1", Name = "List", OwnerName = "O" } },
+            };
+            PanelState s = vm.SearchResultsArrived(results);
+
+            Assert.Null(s.ResultsSections[0].Rows[0].ImageUrl);
+            // ยังต้องกันช่องรูปไว้ ไม่งั้นแถวนี้ชิดซ้ายคนเดียวจนคอลัมน์ไม่ตรงกับแถวอื่น
+            Assert.Equal(RowImageShape.Square, s.ResultsSections[0].Rows[0].ImageShape);
+        }
+
+        // === กางอัลบั้มใต้แถวศิลปิน ===
+
+        private static List<ArtistAlbumInfo> TwoAlbums() => new List<ArtistAlbumInfo>
+        {
+            new ArtistAlbumInfo { Id = "al1", Name = "Modal Soul", TrackCount = 13, ReleaseYear = "2005", CoverUrl = "c1" },
+            new ArtistAlbumInfo { Id = "al2", Name = "Metaphorical Music", TrackCount = 15 },
+        };
+
+        [Fact]
+        public void ArtistToggled_ExpandsWithLoadingRowThenAlbums()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            vm.SearchResultsArrived(SomeResults());
+
+            Assert.True(vm.ArtistToggled("a1")); // ยังไม่กาง -> ต้องไป fetch
+
+            // ระหว่างรอ: แถวสถานะใต้ศิลปิน + ลูกศรพลิกเป็น "<"
+            List<PanelRow> rows = vm.Current.ResultsSections[1].Rows;
+            Assert.Equal("<", rows[0].Right);
+            Assert.Equal("Loading albums…", rows[1].Title);
+            Assert.True(rows[1].Muted);
+            Assert.True(rows[1].Indented);
+
+            PanelState s = vm.ArtistAlbumsArrived("a1", TwoAlbums());
+            rows = s.ResultsSections[1].Rows;
+
+            Assert.Equal(3, rows.Count); // ศิลปิน + 2 อัลบั้ม
+            Assert.Equal("Modal Soul", rows[1].Title);
+            Assert.Equal("2005 · 13 tracks", rows[1].Sub);
+            Assert.Equal("15 tracks", rows[2].Sub); // ไม่มีปีก็เหลือแค่จำนวนเพลง
+            Assert.Equal(RowActionKind.LoadAlbum, rows[1].Action.Kind);
+            Assert.Equal("al1", rows[1].Action.AlbumId);
+            Assert.True(rows[1].Indented);
+            Assert.True(s.NeedsReflow);
+        }
+
+        [Fact]
+        public void ArtistToggled_SameArtistAgain_CollapsesWithoutFetch()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            vm.SearchResultsArrived(SomeResults());
+            vm.ArtistToggled("a1");
+            vm.ArtistAlbumsArrived("a1", TwoAlbums());
+
+            Assert.False(vm.ArtistToggled("a1")); // กดซ้ำ = หุบ ไม่ต้อง fetch
+
+            List<PanelRow> rows = vm.Current.ResultsSections[1].Rows;
+            Assert.Single(rows);
+            Assert.Equal(">", rows[0].Right);
+            Assert.True(vm.Current.NeedsReflow);
+        }
+
+        // ผลของศิลปินที่ผู้ใช้หุบ/เปลี่ยนใจไปแล้วระหว่างรอเน็ต ต้องไม่กระโดดมาแทรกทีหลัง
+        [Fact]
+        public void ArtistAlbumsArrived_ForCollapsedArtist_IsIgnored()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            vm.SearchResultsArrived(SomeResults());
+            vm.ArtistToggled("a1");
+            vm.ArtistToggled("a1"); // หุบระหว่างรอ
+
+            int revBefore = vm.Current.ResultsRevision;
+            PanelState s = vm.ArtistAlbumsArrived("a1", TwoAlbums());
+
+            Assert.Single(s.ResultsSections[1].Rows);
+            Assert.Equal(revBefore, s.ResultsRevision);
+            Assert.False(s.NeedsReflow);
+        }
+
+        [Fact]
+        public void ArtistAlbumsArrived_NullAndEmpty_ShowMessageRow()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            vm.SearchResultsArrived(SomeResults());
+
+            vm.ArtistToggled("a1");
+            vm.ArtistAlbumsArrived("a1", null);
+            Assert.Equal("Album list not available for this account",
+                vm.Current.ResultsSections[1].Rows[1].Title);
+
+            vm.ArtistToggled("a1"); // หุบ
+            vm.ArtistToggled("a1"); // กางใหม่
+            vm.ArtistAlbumsArrived("a1", new List<ArtistAlbumInfo>());
+            Assert.Equal("No albums found", vm.Current.ResultsSections[1].Rows[1].Title);
+        }
+
+        // ค้นหาใหม่/ล้างคำค้น/เปิด My Lists = พื้นที่ผลลัพธ์เป็นของอย่างอื่นแล้ว ต้องไม่มีอัลบั้มค้าง
+        [Fact]
+        public void ExpandedAlbums_CollapseWhenResultsAreaChanges()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            vm.SearchResultsArrived(SomeResults());
+            vm.ArtistToggled("a1");
+            vm.ArtistAlbumsArrived("a1", TwoAlbums());
+
+            PanelState s = vm.SearchResultsArrived(SomeResults());
+            Assert.Single(s.ResultsSections[1].Rows);
+
+            vm.ArtistToggled("a1");
+            vm.ArtistAlbumsArrived("a1", TwoAlbums());
+            vm.SearchCleared();
+            Assert.False(vm.ArtistToggled("a1")); // ไม่มีผลค้นหาให้กางแล้ว
+            Assert.Empty(vm.Current.ResultsSections);
         }
 
         [Fact]
@@ -353,6 +534,99 @@ namespace ChillWithYou_SpotifyMod.Tests
             vm.SearchResultsArrived(SomeResults());
 
             Assert.True(vm.MyListsClicked()); // ต้องขอ fetch ไม่ใช่สั่งหุบ
+        }
+
+        [Fact]
+        public void MyPlaylistsArrived_CarriesCoverImageUrl()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            vm.MyListsClicked();
+
+            PanelState s = vm.MyPlaylistsArrived(new List<UserPlaylistInfo>
+            {
+                new UserPlaylistInfo { Id = "p1", Name = "L", TrackCount = 3, ImageUrl = "list.jpg" },
+                new UserPlaylistInfo { Id = "p2", Name = "No cover", TrackCount = 1 },
+            });
+
+            Assert.Equal("list.jpg", s.ResultsSections[0].Rows[0].ImageUrl);
+            Assert.Null(s.ResultsSections[0].Rows[1].ImageUrl);
+        }
+
+        // /me/playlists คืน total = 0 มาเป็นประจำ - "0 tracks" ทำให้เข้าใจผิดว่า playlist ว่าง
+        [Fact]
+        public void MyPlaylistsArrived_ZeroTrackCount_HidesSubLine()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            vm.MyListsClicked();
+
+            PanelState s = vm.MyPlaylistsArrived(new List<UserPlaylistInfo>
+            {
+                new UserPlaylistInfo { Id = "p1", Name = "Unknown size", TrackCount = 0 },
+                new UserPlaylistInfo { Id = "p2", Name = "Known size", TrackCount = 7 },
+            });
+
+            Assert.Null(s.ResultsSections[0].Rows[0].Sub);
+            Assert.Equal("7 tracks", s.ResultsSections[0].Rows[1].Sub);
+        }
+
+        // playlist ตั้งใจไม่มีการกาง - กดแถวแล้วสั่งเล่นทั้งชุดตรงๆ (ทั้ง My Lists และผลค้นหา)
+        [Fact]
+        public void MyPlaylistRows_PlayWholePlaylistWithNoExpandArrow()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            vm.MyListsClicked();
+
+            PanelState s = vm.MyPlaylistsArrived(
+                new List<UserPlaylistInfo> { new UserPlaylistInfo { Id = "p1", Name = "Mix" } });
+
+            PanelRow row = s.ResultsSections[0].Rows[0];
+            Assert.Single(s.ResultsSections[0].Rows);
+            Assert.Null(row.Right);
+            Assert.False(row.Action.IsToggle);
+            Assert.Equal(RowActionKind.PlayContext, row.Action.Kind);
+            Assert.Equal("spotify:playlist:p1", row.Action.ContextUri);
+            Assert.Equal("playlist:p1", row.Key); // กดแล้วทาสีค้างได้
+        }
+
+        // === ไฮไลต์แถวที่เพิ่งกด ===
+
+        [Fact]
+        public void RowSelected_MarksRowAndSurvivesExpandCollapse()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            vm.SearchResultsArrived(SomeResults());
+
+            string albumKey = vm.Current.ResultsSections[2].Rows[0].Key;
+            Assert.Equal("album:al1", albumKey);
+
+            PanelState s = vm.RowSelected(albumKey);
+            Assert.Equal(albumKey, s.SelectedRowKey);
+            Assert.False(s.NeedsReflow); // แค่เปลี่ยนสี ไม่ได้ขยับโครงสร้าง
+
+            // กางอัลบั้มของศิลปินแล้วสีที่กดไว้ต้องไม่หาย (ยังเป็นผลค้นหาชุดเดิม)
+            vm.ArtistToggled("a1");
+            vm.ArtistAlbumsArrived("a1", TwoAlbums());
+            Assert.Equal(albumKey, vm.Current.SelectedRowKey);
+        }
+
+        [Fact]
+        public void SelectedRow_ClearsWhenResultsAreaChanges()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            vm.SearchResultsArrived(SomeResults());
+            vm.RowSelected("album:al1");
+
+            vm.SearchResultsArrived(SomeResults());
+            Assert.Null(vm.Current.SelectedRowKey);
+
+            vm.RowSelected("album:al1");
+            vm.SearchCleared();
+            Assert.Null(vm.Current.SelectedRowKey);
         }
 
         [Fact]

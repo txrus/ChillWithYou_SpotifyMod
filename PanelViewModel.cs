@@ -23,7 +23,13 @@ namespace ChillWithYou_SpotifyMod
         PlayContext,        // เล่นทั้ง playlist/album/artist ตั้งแต่ต้น
         PlayTrackInContext, // เล่นเพลงนี้โดยคง context (next/prev เดินต่อ)
         LoadAlbum,          // โหลด track list ของอัลบั้มมาแสดง (ยังไม่เล่น)
+        ToggleArtistAlbums, // กาง/หุบรายการอัลบั้มของศิลปินใต้แถวนั้น
     }
+
+    // ทรงของรูปเล็กหน้าแถว - None = แถวนี้ไม่มีช่องรูปเลย (แถวคิวเพลงที่ทุกแถวใช้ปกเดียวกัน)
+    // แถวที่มีช่องรูปจะกันที่ไว้เสมอแม้ยังไม่รู้ URL หรือไม่มีรูป (ศิลปินบางคนไม่มีรูปบน Spotify)
+    // ไม่งั้นแถวนั้นจะเลื่อนไปชิดซ้ายคนเดียวจนคอลัมน์ในลิสต์ไม่ตรงกัน
+    public enum RowImageShape { None, Square, Circle }
 
     public struct RowAction
     {
@@ -33,8 +39,13 @@ namespace ChillWithYou_SpotifyMod
         public string AlbumId;
         public string AlbumName;
         public string AlbumCoverUrl;
+        public string ArtistId;
 
         public static readonly RowAction None = new RowAction { Kind = RowActionKind.None };
+
+        // แถวที่กดแล้วแค่กาง/หุบ ไม่ได้สั่งอะไรกับ Spotify - ไม่ต้องทาสีค้างว่า "เพิ่งกด"
+        // (ลูกศร > / < ที่ท้ายแถวบอกสถานะให้อยู่แล้ว)
+        public bool IsToggle => Kind == RowActionKind.ToggleArtistAlbums;
         public static RowAction PlayTrack(string trackId) =>
             new RowAction { Kind = RowActionKind.PlayTrack, TrackId = trackId };
         public static RowAction PlayContext(string contextUri) =>
@@ -43,6 +54,8 @@ namespace ChillWithYou_SpotifyMod
             new RowAction { Kind = RowActionKind.PlayTrackInContext, ContextUri = contextUri, TrackId = trackId };
         public static RowAction LoadAlbum(string albumId, string albumName, string coverUrl) =>
             new RowAction { Kind = RowActionKind.LoadAlbum, AlbumId = albumId, AlbumName = albumName, AlbumCoverUrl = coverUrl };
+        public static RowAction ToggleArtistAlbums(string artistId) =>
+            new RowAction { Kind = RowActionKind.ToggleArtistAlbums, ArtistId = artistId };
     }
 
     // แถวหนึ่งใน list (คิวเพลง / ผลค้นหา / My Lists) - เป็น data ล้วน renderer วาดตามนี้
@@ -51,9 +64,26 @@ namespace ChillWithYou_SpotifyMod
         public string Index;   // เลขลำดับ ("1", "2", ...) - null = ไม่มีช่องเลข (แถวผลค้นหา)
         public string Title;
         public string Sub;     // บรรทัดรอง (ศิลปิน / "Artist" / "N tracks" / เจ้าของ playlist)
-        public string Right;   // ช่องขวา (เวลาเพลง) - null = ไม่มี
+        public string Right;   // ช่องขวา (เวลาเพลง / ลูกศรกาง-หุบ) - null = ไม่มี
         public string TrackId; // ใช้จับคู่ highlight เพลงที่กำลังเล่น - null = แถวนี้ไม่เกี่ยว
         public RowAction Action;
+
+        // ปุ่มเล่นวงกลมท้ายแถว - ทางลัดสั่งเล่นทั้ง artist/album/playlist โดยไม่ต้องกางเข้าไปเลือกเพลง
+        // Kind = None (ค่าเริ่มต้น) = แถวนี้ไม่มีปุ่ม
+        public RowAction PlayAction;
+
+        // รูปเล็กหน้าแถว (ปกอัลบั้ม/ปก playlist/รูปศิลปิน)
+        // VM ถือแค่ URL เพราะดาวน์โหลด/แคช/สร้าง texture เป็นเรื่องของฝั่ง Unity
+        // ImageUrl = null ทั้งที่ ImageShape != None แปลว่า "มีช่องรูปแต่ไม่มีรูป" -> โชว์ placeholder
+        public string ImageUrl;
+        public RowImageShape ImageShape;
+
+        public bool Indented; // แถวลูก (อัลบั้ม/เพลงที่กางออกมา) - เยื้องขวาให้เห็นลำดับชั้น
+        public bool Muted;    // แถวข้อความสถานะ (กำลังโหลด/โหลดไม่ได้) ไม่ใช่ของกดได้
+
+        // รหัสประจำแถวสำหรับไฮไลต์ "แถวที่เพิ่งกด" ในพื้นที่ผลลัพธ์ (เช่น "album:xxx")
+        // null = แถวนี้กดแล้วไม่ต้องค้างสี (แถวคิวเพลง / แถวที่แค่กาง-หุบ / แถวข้อความ)
+        public string Key;
     }
 
     // หมวดหนึ่งในพื้นที่ผลลัพธ์ (เช่น "TRACKS") - Message มีค่าเมื่อหมวดนี้เป็นข้อความแจ้งเฉยๆ
@@ -101,6 +131,10 @@ namespace ChillWithYou_SpotifyMod
         public ResultsMode ResultsMode = ResultsMode.Empty;
         public List<PanelSection> ResultsSections = new List<PanelSection>();
 
+        // แถวในพื้นที่ผลลัพธ์ที่ผู้เล่นเพิ่งกด (ตาม PanelRow.Key) - ทาสีค้างไว้เป็นการยืนยันว่า
+        // "กดติดแล้ว กำลังทำงานให้อยู่" เพราะผลของการกด (คิวเปลี่ยน/เพลงเปลี่ยน) มาช้ากว่านิ้ว
+        public string SelectedRowKey;
+
         // rebuild เฉพาะตอนเนื้อหาเปลี่ยนจริง - Apply เทียบกับเลขที่ตัวเอง apply ล่าสุด
         public int QueueRevision;
         public int ResultsRevision;
@@ -115,6 +149,20 @@ namespace ChillWithYou_SpotifyMod
     public class PanelViewModel
     {
         public PanelState Current { get; private set; } = new PanelState();
+
+        // ผลค้นหาชุดล่าสุด - เก็บไว้เพราะการกาง/หุบอัลบั้มของศิลปินต้องประกอบ section ใหม่ทั้งชุด
+        private SpotifySearchResults _lastSearchResults;
+
+        // รายชื่อ playlist ของ user ชุดล่าสุด - เหตุผลเดียวกับ _lastSearchResults (กาง/หุบต้องประกอบใหม่)
+        private List<UserPlaylistInfo> _lastMyPlaylists;
+
+        // ศิลปินที่กางรายการอัลบั้มอยู่ (null = ไม่มีใครกาง) พร้อมของที่จะแสดงใต้แถวนั้น
+        private string _expandedArtistId;
+        private List<ArtistAlbumInfo> _expandedAlbums;
+        private string _expandedMessage; // ข้อความแทนรายการ (กำลังโหลด / โหลดไม่ได้) - null = มีรายการจริง
+
+        // หมายเหตุ: แถว playlist ตั้งใจไม่มีการกางรายชื่อเพลง - กดแล้วสั่งเล่นทั้งชุดไปเลย
+        // (Spotify ตัด track list ออกจาก response ของ playlist ส่วนใหญ่อยู่แล้ว กางไปก็มักได้ที่ว่าง)
 
         // === events ===
 
@@ -131,6 +179,18 @@ namespace ChillWithYou_SpotifyMod
                 SearchRowVisible = loggedIn,
                 NeedsReflow = true,
             };
+            _lastSearchResults = null;
+            _lastMyPlaylists = null;
+            CollapseArtist();
+            return Current;
+        }
+
+        // ผู้เล่นกดแถวหนึ่งในพื้นที่ผลลัพธ์ - ทาสีค้างไว้ให้รู้ว่ากดติดแล้ว
+        // (ผลจริงของการกดมาทีหลังเสมอ: โหลดรายชื่อเพลง / รอ Spotify สลับเพลง)
+        public PanelState RowSelected(string key)
+        {
+            Current.NeedsReflow = false;
+            Current.SelectedRowKey = key;
             return Current;
         }
 
@@ -253,6 +313,10 @@ namespace ChillWithYou_SpotifyMod
         // ผลค้นหามาถึง - แทนที่พื้นที่ผลลัพธ์ทั้งหมด (รวมถึงปิดโหมด My Lists ที่อาจเปิดอยู่)
         public PanelState SearchResultsArrived(SpotifySearchResults results)
         {
+            _lastSearchResults = results;
+            _lastMyPlaylists = null;
+            CollapseArtist(); // ผลชุดใหม่แล้ว - อัลบั้มที่กางค้างจากคำค้นก่อนไม่เกี่ยวกันแล้ว
+            Current.SelectedRowKey = null;
             Current.ResultsSections = new List<PanelSection>();
             Current.ResultsRevision++;
             Current.NeedsReflow = true;
@@ -267,6 +331,60 @@ namespace ChillWithYou_SpotifyMod
             }
 
             Current.ResultsMode = ResultsMode.SearchResults;
+            BuildSearchSections();
+            return Current;
+        }
+
+        // กดแถวศิลปิน: กางรายการอัลบั้มใต้แถวนั้น / กดซ้ำที่คนเดิมคือหุบ
+        // คืน true = ผู้เรียกต้องไปดึงรายการอัลบั้มมาแล้วเรียก ArtistAlbumsArrived ต่อ
+        // (ระหว่างรอ แถวจะโชว์ "Loading albums…" ไว้ก่อน ผู้เรียกจึงควร Apply ทันทีทั้งสองทาง)
+        public bool ArtistToggled(string artistId)
+        {
+            if (string.IsNullOrEmpty(artistId) || _lastSearchResults == null)
+            {
+                Current.NeedsReflow = false;
+                return false;
+            }
+
+            if (_expandedArtistId == artistId)
+            {
+                CollapseArtist();
+                RebuildResults();
+                return false;
+            }
+
+            // กางคนใหม่ = หุบคนเก่าไปในตัว (กางได้ทีละคน ไม่งั้นลิสต์ยาวจนหาของไม่เจอ)
+            _expandedArtistId = artistId;
+            _expandedAlbums = null;
+            _expandedMessage = "Loading albums…";
+            RebuildResults();
+            return true;
+        }
+
+        // รายการอัลบั้มของศิลปินมาถึง (null = โหลดพลาด/endpoint ไม่ให้ใช้)
+        // ผลของศิลปินที่ไม่ใช่คนที่กางอยู่แล้ว (ผู้ใช้หุบหรือกดคนอื่นระหว่างรอ) ให้ทิ้งไปเฉยๆ
+        public PanelState ArtistAlbumsArrived(string artistId, List<ArtistAlbumInfo> albums)
+        {
+            if (_expandedArtistId == null || _expandedArtistId != artistId)
+            {
+                Current.NeedsReflow = false;
+                return Current;
+            }
+
+            _expandedAlbums = albums;
+            _expandedMessage =
+                albums == null ? "Album list not available for this account" :
+                albums.Count == 0 ? "No albums found" : null;
+            RebuildResults();
+            return Current;
+        }
+
+        // ประกอบ section ของผลค้นหาใหม่ทั้งชุดจาก _lastSearchResults + สถานะกาง/หุบปัจจุบัน
+        // (เรียกทั้งตอนผลค้นหามาถึงและตอนกาง/หุบอัลบั้ม - แถวจึงมาจากที่เดียวเสมอ)
+        private void BuildSearchSections()
+        {
+            SpotifySearchResults results = _lastSearchResults;
+            if (results == null) return;
 
             if (results.Tracks.Count > 0)
             {
@@ -277,6 +395,9 @@ namespace ChillWithYou_SpotifyMod
                         Title = t.Title,
                         Sub = t.Artist,
                         Right = FormatTime(TimeSpan.FromMilliseconds(t.DurationMs)),
+                        ImageUrl = t.AlbumCoverUrl,
+                        ImageShape = RowImageShape.Square,
+                        Key = TrackKey(t.Id),
                         Action = RowAction.PlayTrack(t.Id),
                     });
             }
@@ -284,15 +405,25 @@ namespace ChillWithYou_SpotifyMod
             if (results.Artists.Count > 0)
             {
                 var s = NewSection("Artists");
-                // สั่งเล่น artist context ไปเลย - ดึงรายชื่อเพลงของศิลปินมาแสดงก่อนไม่ได้แล้ว
-                // (/artists/{id}/top-tracks ถูกตัดจาก Development Mode รอบ ก.พ. 2026)
                 foreach (SearchArtistResult a in results.Artists)
+                {
+                    bool expanded = a.Id != null && a.Id == _expandedArtistId;
                     s.Rows.Add(new PanelRow
                     {
                         Title = a.Name,
                         Sub = "Artist",
-                        Action = RowAction.PlayContext($"spotify:artist:{a.Id}"),
+                        Right = expanded ? "<" : ">", // ตัวบอกสถานะกาง/หุบ (กดที่แถวไหนก็ได้ทั้งแถว)
+                        ImageUrl = a.ImageUrl,
+                        ImageShape = RowImageShape.Circle,
+                        Key = ArtistKey(a.Id),
+                        Action = RowAction.ToggleArtistAlbums(a.Id),
+                        // ทางลัด: ไม่อยากไล่ดูอัลบั้ม กดปุ่มนี้ให้เล่นเพลงของศิลปินคนนี้ไปเลย
+                        PlayAction = RowAction.PlayContext($"spotify:artist:{a.Id}"),
                     });
+
+                    if (expanded)
+                        AddExpandedAlbumRows(s);
+                }
             }
 
             if (results.Albums.Count > 0)
@@ -303,33 +434,113 @@ namespace ChillWithYou_SpotifyMod
                     {
                         Title = al.Name,
                         Sub = al.ArtistName,
+                        ImageUrl = al.CoverUrl,
+                        ImageShape = RowImageShape.Square,
+                        Key = AlbumKey(al.Id),
+                        // กดแถว = เอารายชื่อเพลงมาลงพื้นที่คิวให้เลือกเอง / กดปุ่ม = เล่นทั้งอัลบั้มเลย
                         Action = RowAction.LoadAlbum(al.Id, al.Name, al.CoverUrl),
+                        PlayAction = RowAction.PlayContext($"spotify:album:{al.Id}"),
                     });
             }
 
             if (results.Playlists.Count > 0)
             {
                 var s = NewSection("Playlists");
-                // สั่งเล่น playlist เลยแทนการโหลดรายชื่อเพลงมาแสดง (อ่าน track list ตรงๆ
-                // โดนบล็อกสำหรับ dev-mode app) - พอเริ่มเล่น context ใหม่จะเติมหน้าคิวให้เอง
                 foreach (SearchPlaylistResult p in results.Playlists)
                     s.Rows.Add(new PanelRow
                     {
                         Title = p.Name,
                         Sub = p.OwnerName ?? "-",
+                        ImageUrl = p.CoverUrl,
+                        ImageShape = RowImageShape.Square,
+                        Key = PlaylistKey(p.Id),
                         Action = RowAction.PlayContext($"spotify:playlist:{p.Id}"),
                     });
             }
+        }
 
-            return Current;
+        // แถวลูกใต้ศิลปินที่กางอยู่ - รายการอัลบั้ม หรือข้อความสถานะเมื่อยังไม่มีรายการ
+        private void AddExpandedAlbumRows(PanelSection s)
+        {
+            if (_expandedMessage != null)
+            {
+                s.Rows.Add(new PanelRow { Title = _expandedMessage, Indented = true, Muted = true });
+                return;
+            }
+
+            foreach (ArtistAlbumInfo al in _expandedAlbums)
+            {
+                string tracks = $"{al.TrackCount} tracks";
+                s.Rows.Add(new PanelRow
+                {
+                    Title = al.Name,
+                    Sub = al.ReleaseYear != null ? $"{al.ReleaseYear} · {tracks}" : tracks,
+                    ImageUrl = al.CoverUrl,
+                    ImageShape = RowImageShape.Square,
+                    Indented = true,
+                    Key = AlbumKey(al.Id),
+                    // กดแล้วเอารายชื่อเพลงมาลงพื้นที่คิว เหมือนกดอัลบั้มจากหมวด Albums
+                    Action = RowAction.LoadAlbum(al.Id, al.Name, al.CoverUrl),
+                    PlayAction = RowAction.PlayContext($"spotify:album:{al.Id}"),
+                });
+            }
+        }
+
+        private void BuildMyPlaylistSection()
+        {
+            var section = NewSection("My Playlists");
+            if (_lastMyPlaylists == null || _lastMyPlaylists.Count == 0)
+            {
+                section.Message = _lastMyPlaylists == null
+                    ? "Failed to load playlists, try again"
+                    : "No playlists in this account";
+                return;
+            }
+
+            foreach (UserPlaylistInfo p in _lastMyPlaylists)
+                section.Rows.Add(new PanelRow
+                {
+                    Title = p.Name,
+                    // /me/playlists คืน tracks.total = 0 มาให้เป็นประจำ - โชว์ "0 tracks" มีแต่ทำให้
+                    // เข้าใจผิดว่า playlist ว่าง เลยซ่อนบรรทัดรองไปเลยเมื่อไม่รู้จำนวนจริง
+                    Sub = p.TrackCount > 0 ? $"{p.TrackCount} tracks" : null,
+                    ImageUrl = p.ImageUrl,
+                    ImageShape = RowImageShape.Square,
+                    Key = PlaylistKey(p.Id),
+                    Action = RowAction.PlayContext($"spotify:playlist:{p.Id}"),
+                });
+        }
+
+        private void CollapseArtist()
+        {
+            _expandedArtistId = null;
+            _expandedAlbums = null;
+            _expandedMessage = null;
+        }
+
+        // ประกอบพื้นที่ผลลัพธ์ใหม่ทั้งชุดตามโหมดที่โชว์อยู่ (ผลค้นหา / My Lists)
+        private void RebuildResults()
+        {
+            Current.ResultsSections = new List<PanelSection>();
+            Current.ResultsRevision++;
+            Current.NeedsReflow = true;
+
+            if (Current.ResultsMode == ResultsMode.SearchResults) BuildSearchSections();
+            else if (Current.ResultsMode == ResultsMode.MyPlaylists) BuildMyPlaylistSection();
         }
 
         // กดปุ่ม My Lists: ถ้ากำลังโชว์อยู่ -> หุบ (ผู้เรียกไม่ต้อง fetch)
         // ถ้ายังไม่โชว์ -> คืน true ให้ผู้เรียกไป fetch แล้วค่อยเรียก MyPlaylistsArrived
         public bool MyListsClicked()
         {
+            // ไม่ว่าจะกางหรือหุบ พื้นที่ผลลัพธ์ก็ไม่ใช่ของผลค้นหาแล้ว - ทิ้งสถานะกางอัลบั้มไปด้วย
+            _lastSearchResults = null;
+            CollapseArtist();
+            Current.SelectedRowKey = null;
+
             if (Current.ResultsMode == ResultsMode.MyPlaylists)
             {
+                _lastMyPlaylists = null;
                 Current.ResultsMode = ResultsMode.Empty;
                 Current.ResultsSections = new List<PanelSection>();
                 Current.ResultsRevision++;
@@ -344,28 +555,10 @@ namespace ChillWithYou_SpotifyMod
         // รายชื่อ playlist ของ user มาถึง (null = โหลดพลาด) - โชว์ในพื้นที่ผลลัพธ์
         public PanelState MyPlaylistsArrived(List<UserPlaylistInfo> playlists)
         {
-            Current.ResultsSections = new List<PanelSection>();
-            Current.ResultsRevision++;
-            Current.NeedsReflow = true;
+            _lastMyPlaylists = playlists;
             // นับเป็นโหมด My Lists แม้โหลดพลาด - กดปุ่มซ้ำจะได้หุบข้อความ error ได้เหมือนรายการปกติ
             Current.ResultsMode = ResultsMode.MyPlaylists;
-
-            var section = NewSection("My Playlists");
-            if (playlists == null || playlists.Count == 0)
-            {
-                section.Message = playlists == null
-                    ? "Failed to load playlists, try again"
-                    : "No playlists in this account";
-                return Current;
-            }
-
-            foreach (UserPlaylistInfo p in playlists)
-                section.Rows.Add(new PanelRow
-                {
-                    Title = p.Name,
-                    Sub = $"{p.TrackCount} tracks",
-                    Action = RowAction.PlayContext($"spotify:playlist:{p.Id}"),
-                });
+            RebuildResults();
             return Current;
         }
 
@@ -379,6 +572,10 @@ namespace ChillWithYou_SpotifyMod
                 return Current;
             }
 
+            _lastSearchResults = null;
+            _lastMyPlaylists = null;
+            CollapseArtist();
+            Current.SelectedRowKey = null;
             Current.ResultsMode = ResultsMode.Empty;
             Current.ResultsSections = new List<PanelSection>();
             Current.ResultsRevision++;
@@ -387,6 +584,12 @@ namespace ChillWithYou_SpotifyMod
         }
 
         // === helpers ===
+
+        // รหัสแถวสำหรับไฮไลต์ "แถวที่เพิ่งกด" - ต้องไม่ชนกันข้ามชนิดของแถว
+        private static string TrackKey(string id) => id != null ? "track:" + id : null;
+        private static string AlbumKey(string id) => id != null ? "album:" + id : null;
+        private static string ArtistKey(string id) => id != null ? "artist:" + id : null;
+        private static string PlaylistKey(string id) => id != null ? "playlist:" + id : null;
 
         private PanelSection NewSection(string label)
         {
