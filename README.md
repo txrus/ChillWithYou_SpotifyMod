@@ -153,7 +153,7 @@ This mod was made to learn, and almost everything about it was learned from othe
 
 See the per-version history in [CHANGELOG.md](CHANGELOG.md).
 
-Latest version **v1.1.2** — track list and refresh fixes: queue titles no longer vanish or overlap other rows, repeat no longer shows every song twice, the game's own track rows reflow below the mod's panel (both under search results and right after connecting), and the panel now updates by itself when you alt-tab back into the game after starting a song elsewhere.
+Latest version **v1.2.0** — search results and My Lists now show real cover art, clicking an artist expands their album list, and a play button on each artist/album row starts the whole thing without digging in. Rows you tap highlight immediately instead of sitting silent until Spotify answers. Also fixes two loops that hammered the Web API — one fired every frame while a song was ending, the other stacked a fresh poll cycle per row you tapped — plus the track list and refresh fixes previously staged as 1.1.2.
 
 ## License
 
