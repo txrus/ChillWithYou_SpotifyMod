@@ -99,14 +99,17 @@ After a successful build, both `ChillWithYou_SpotifyMod.dll` and its dependency 
 | `plugin.cs` | Plugin entry point + MainThreadDispatcher |
 | `SpotifyAuth.cs` | OAuth PKCE flow + local callback server |
 | `SpotifyTokenStore.cs` | Stores the token on disk, encrypted (DPAPI) |
-| `SpotifyWebApi.cs` / `SpotifyApi.cs` / `SpotifyApiClient.cs` | Spotify Web API calls |
-| `SpotifySearchApi.cs` | Track search |
-| `SpotifyRateLimiter.cs` | Limits API call frequency |
-| `SpotifyButtonInjector.cs` | Builds/injects the player UI into the game |
-| `PlaylistSelectionUI.cs` | Playlist selection UI |
+| `SpotifyGateway.cs` | The single request envelope every API call goes through: bearer header, 429 → rate limiter, retry on transient 401/403, error logging |
+| `SpotifyApi.cs` | Player endpoints: now-playing info, play/pause/next/prev, play by track/context URI |
+| `SpotifyWebApi.cs` | Playlists, the now-playing queue, and album track lists (with caching) |
+| `SpotifySearchApi.cs` | Search (tracks / artists / albums / playlists) |
+| `SpotifyRateLimiter.cs` | Blocks further calls for a while after Spotify answers 429 |
+| `NowPlayingSession.cs` | Pure playback state machine (progress interpolation, play/pause anchoring) — no Unity references, covered by unit tests |
+| `SpotifyButtonInjector.cs` | Assembles the player panel inside the game's menu and wires its behavior |
+| `SpotifyUiKit.cs` | Game-styled widget kit: color palette, game-font discovery, circle/pill buttons, progress slider, search input |
 | `UiSprites.cs` | Builds UI sprites/textures in code (no image assets needed) |
-| `TrackInfo.cs` | Now-playing data model + UI update helpers |
 | `SpotifyPatches.cs` | Harmony patches |
+| `tests/NowPlayingSession.Tests` | xUnit tests for `NowPlayingSession` — `dotnet test tests/NowPlayingSession.Tests`, no game or Unity needed |
 
 ## Spotify Web API limitations (Development Mode)
 
@@ -150,7 +153,7 @@ This mod was made to learn, and almost everything about it was learned from othe
 
 See the per-version history in [CHANGELOG.md](CHANGELOG.md).
 
-Latest version **v1.1.2** — track list fixes: queue titles no longer vanish or overlap other rows, repeated songs are de-duplicated when repeat is on, and the game's own track rows now reflow below the Spotify search results.
+Latest version **v1.1.2** — track list and refresh fixes: queue titles no longer vanish or overlap other rows, repeat no longer shows every song twice, the game's own track rows reflow below the mod's panel (both under search results and right after connecting), and the panel now updates by itself when you alt-tab back into the game after starting a song elsewhere.
 
 ## License
 
