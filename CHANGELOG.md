@@ -38,6 +38,23 @@
   ออกจาก `SpotifyButtonInjector` เป็น `NowPlayingSession` ที่เป็น logic ล้วน ไม่พึ่ง Unity
   พร้อม unit test 13 เคสที่รันด้วย .NET SDK ปกติได้โดยไม่ต้องเปิดเกม
 - ลบโค้ด playlist-selection ที่ไม่ถูกเรียกใช้แล้วออก
+- เก็บ HTTP ที่หลุด envelope ใน `SpotifyButtonInjector` เข้า API layer: เดิม injector
+  ประกอบ body ของ `me/player/play` เอง 3 ชุด และมี `HttpClient` ตัวที่สี่ยิง
+  `/albums/{id}/tracks` ตรงๆ (ไม่ผ่าน retry/429/logging ของ gateway) ตอนนี้คำสั่งเล่น
+  ทั้งหมดอยู่ใน `SpotifyApi.Play*` และการโหลดอัลบั้มอยู่ใน `SpotifyWebApi.GetAlbumTracksAsync`
+- แยกชุดประกอบ widget สไตล์เกม (โทนสี, หาฟอนต์ของเกม, ปุ่มวงกลม/pill, progress slider,
+  ช่องค้นหา) ออกเป็น `SpotifyUiKit` - โมดูลที่รู้แค่ "หน้าตา" ไม่รู้จัก Spotify เลย
+- แยก logic หน้าจอของ panel ทั้งหมด (แถวไหนโผล่/ซ่อน, ตอนไหนต้อง reflow layout,
+  พื้นที่ผลลัพธ์โชว์อะไร, toggle My Lists) ออกเป็น `PanelViewModel` - state machine ล้วน
+  ป้อน event เข้าแล้วคืน `PanelState` snapshot เต็มชุด ฝั่ง Unity เหลือ `Apply(state)`
+  จุดเดียวแบบ idempotent ทำให้บั๊กตระกูล "ลืม SetActive/ลืม rebuild" (ต้นเหตุ 3 ใน 6
+  บั๊กของเวอร์ชันนี้) เกิดไม่ได้เชิงโครงสร้าง (#15, #16)
+- แยกกฎ orchestration ของการ refresh (โหลด context เมื่อไหร่/ผ่านทางไหน, กฎ
+  commit-เฉพาะ-ตอนสำเร็จที่กันคิวว่างค้างถาวร, จังหวะ retry หลังสั่งเล่น, cooldown ของ
+  focus-resync) ออกเป็น `RefreshCoordinator` - injector เหลือแค่ยิง API ตามแผน (#17, #18)
+- test bench รวมทั้งหมด 57 เคส (`dotnet test` ไม่ต้องมีเกม/Unity/บัญชี Spotify) ครอบ
+  `NowPlayingSession`, `PanelViewModel`, `RefreshCoordinator` รวม regression ของบั๊กจริง
+  ทุกตัวในเวอร์ชันนี้ที่เดิมต้องเปิดเกม + login + เปิดเพลงจริงถึงจะเจอ
 
 ## [1.1.1]
 
