@@ -1,4 +1,40 @@
 =====================================================================
+WHAT'S NEW IN v1.2
+=====================================================================
+
+The list was plain text before, so finding the thing you wanted meant
+reading every row. This release gives it artwork and makes it answer
+back when you click.
+
+- Cover art on every row in search results and My Playlists. Artist rows
+  get a round photo, everything else a rounded album cover.
+- Click an artist to expand their albums, with year and track count.
+  Click an album from there to see its tracks, same as the Albums
+  section. Click the artist again to collapse it.
+- A play button at the end of artist and album rows starts the whole
+  thing straight away, so you can either browse in or just play it.
+- Rows highlight the moment you click them. Loading an album or
+  switching songs takes a second or two, and before this nothing on
+  screen acknowledged the click at all.
+- Playlists no longer claim "0 tracks". Spotify reports 0 for most
+  playlists through this API, so the line is simply hidden now.
+
+Two bugs that made the mod call Spotify far more than it should:
+
+- While a song was ending, the mod re-asked "what's playing now?" every
+  single frame until Spotify actually moved on to the next track. If you
+  paused near the end, it kept asking indefinitely.
+- Clicking several rows in a row started a fresh polling cycle for each
+  click, all running at once.
+
+Both are fixed. Nothing changed in how you install or build the mod.
+
+Existing users: rebuild from this source the same way you did before
+(your Client ID has to go back into SpotifyAuth.cs — that part hasn't
+changed).
+
+
+=====================================================================
 REQUIREMENTS
 =====================================================================
 
@@ -16,7 +52,7 @@ any C#. Every step is below.
 
 
 =====================================================================
-STEP 1 - INSTALL BEPINEX
+STEP 1 - INSTALL BEPINEX AND .NET
 =====================================================================
 
 1. Download BepInEx 5.x (x64) from
@@ -24,6 +60,8 @@ STEP 1 - INSTALL BEPINEX
 2. Extract it into your game folder, next to "Chill With You.exe".
 3. Launch the game once, then close it. This makes BepInEx create its
    folders, including BepInEx\plugins.
+4. Install the .NET SDK 8.0 or newer from
+   https://dotnet.microsoft.com/download
 
 
 =====================================================================
@@ -177,13 +215,16 @@ KNOWN LIMITATIONS (SPOTIFY'S, NOT THE MOD'S)
 Spotify removed a number of Web API endpoints for apps like this one, so
 some things are simply not possible:
 
-- Cannot list an artist's top tracks or full discography before playing.
-  Clicking an artist starts playback, then the real queue is shown.
+- Cannot list an artist's top tracks. The album list does work (that is
+  what expands when you click an artist), but "most popular songs" is
+  not available.
 - Cannot select a specific track while playing from an artist. The queue
   is display-only there; use the next button.
-- Cannot open Daily Mix, Discover Weekly, or "This Is ..." playlists.
-  These are Spotify-owned and no longer readable through the API.
-- Search returns at most 10 results per category.
+- Cannot read the track list of most playlists, including Daily Mix,
+  Discover Weekly and "This Is ..." — so clicking a playlist plays it
+  rather than opening it. Once it starts, the real queue is shown.
+- Search returns at most 10 results per category, and an artist's albums
+  come back 10 at a time (the mod pages through up to 50 for you).
 
 Full details and links to Spotify's announcements are in the README.
 
