@@ -19,6 +19,8 @@
   <ItemGroup>
     <!-- link-compile เฉพาะไฟล์ logic ล้วน ไม่อ้างอิงทั้ง mod assembly (จะลาก UnityEngine มาด้วย) -->
     <Compile Include="..\..\NowPlayingSession.cs" Link="NowPlayingSession.cs" />
+    <Compile Include="..\..\SpotifyModels.cs" Link="SpotifyModels.cs" />
+    <Compile Include="..\..\PanelViewModel.cs" Link="PanelViewModel.cs" />
   </ItemGroup>
 
 </Project>

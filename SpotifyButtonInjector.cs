@@ -39,13 +39,22 @@ namespace ChillWithYou_SpotifyMod
         // แถวใน queue list ทั้งหมด (trackId -> Text ชื่อเพลงของแถวนั้น) เก็บไว้ highlight เพลงที่กำลังเล่นอยู่
         private static readonly System.Collections.Generic.List<(string trackId, Text title)> _queueRowTitles =
             new System.Collections.Generic.List<(string, Text)>();
-        private static string _currentTrackId;
 
         // สถานะการเล่น + นาฬิกา interpolate ย้ายไป NowPlayingSession แล้ว (ทดสอบได้โดยไม่พึ่ง Unity)
         private static readonly NowPlayingSession _session = new NowPlayingSession();
 
-        // จำ bytes ของปกที่แสดงอยู่ (reference เดิมจาก cache ฝั่ง SpotifyApi) กันสร้าง Texture2D ซ้ำทุกรอบ refresh
+        // "แถวไหนโผล่/list โชว์อะไร/ต้อง reflow ไหม" ทั้งหมดเป็นของ PanelViewModel (state machine
+        // ล้วน ทดสอบด้วย xUnit ได้) - ไฟล์นี้แค่ป้อน event เข้า VM แล้วเอา state มาเข้า Apply() จุดเดียว
+        // ห้ามเรียก VM นอก main thread (event มาจาก background ให้ห่อ Plugin.RunOnMainThread ก่อน)
+        private static readonly PanelViewModel _vm = new PanelViewModel();
+
+        // เลข revision ของ list ที่ render ไปแล้ว - Apply จะ rebuild แถวเฉพาะตอนเลขใน state ขยับ
+        private static int _appliedQueueRev = -1;
+        private static int _appliedResultsRev = -1;
+
+        // จำ bytes ของปกที่แสดงอยู่ (reference เดิมจาก cache ฝั่ง SpotifyApi) กันสร้าง Texture2D ซ้ำทุกรอบ Apply
         private static byte[] _lastAppliedCoverBytes;
+        private static byte[] _lastAppliedHeaderCoverBytes;
 
         private static bool _subscribedToTick;
         private static bool _subscribedToFocus;
@@ -333,7 +342,6 @@ namespace ChillWithYou_SpotifyMod
                 myListsBtnLe.preferredWidth = 72f;
                 myListsBtnLe.minWidth = 72f;
                 myListsBtn.onClick.AddListener(() => SafeFireAndForget(OnMyPlaylistsClicked()));
-                _showingMyPlaylists = false; // UI ชุดใหม่เริ่มจาก list ว่างเสมอ กัน toggle ค้างจากรอบก่อน
 
                 // --- Search results list (แยก 4 หมวด: Tracks/Artists/Albums/Playlists) ---
                 _searchResultsList = new GameObject("SearchResultsList");
@@ -347,12 +355,12 @@ namespace ChillWithYou_SpotifyMod
                 ContentSizeFitter searchResultsFitter = _searchResultsList.AddComponent<ContentSizeFitter>();
                 searchResultsFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-                bool alreadyLoggedIn = SpotifyAuth.IsLoggedIn;
-                _connectRow.SetActive(!alreadyLoggedIn);
-                _playlistHeader.SetActive(alreadyLoggedIn);
-                _queueList.SetActive(alreadyLoggedIn);
-                _controlsRow.SetActive(alreadyLoggedIn);
-                _searchRow.SetActive(alreadyLoggedIn);
+                // UI ชุดใหม่ยังไม่เคย render list ใดๆ - รีเซ็ตเลขที่ apply ไว้ให้ rebuild จาก state รอบแรกเสมอ
+                _appliedQueueRev = -1;
+                _appliedResultsRev = -1;
+                _lastAppliedCoverBytes = null;
+                _lastAppliedHeaderCoverBytes = null;
+                Apply(_vm.ResetForInject(SpotifyAuth.IsLoggedIn));
 
                 _spotifySection.SetActive(true);
 
@@ -418,7 +426,7 @@ namespace ChillWithYou_SpotifyMod
         // === ปุ่มควบคุม ===
         private static async Task OnPrevClicked()
         {
-            string trackBefore = _currentTrackId;
+            string trackBefore = _vm.Current.HighlightedTrackId;
             await SpotifyApi.Previous();
             await RefreshAfterPlay(trackBefore, _lastSeenContextUri);
         }
@@ -443,19 +451,19 @@ namespace ChillWithYou_SpotifyMod
         private static void ApplyLocalPlayPause()
         {
             _session.TogglePlayPause(DateTime.UtcNow);
-            if (_playPauseLabel != null) _playPauseLabel.text = _session.IsPlaying ? "||" : ">";
+            Apply(_vm.LocalPlayPauseToggled(_session.IsPlaying));
         }
 
         private static async Task OnNextClicked()
         {
-            string trackBefore = _currentTrackId;
+            string trackBefore = _vm.Current.HighlightedTrackId;
             await SpotifyApi.Next();
             await RefreshAfterPlay(trackBefore, _lastSeenContextUri);
         }
 
         private static void OnConnectClicked()
         {
-            _statusText.text = "";
+            Apply(_vm.ConnectClicked());
             SpotifyAuth.StartLogin(OnLoginSuccess, OnLoginFailed);
         }
 
@@ -467,26 +475,15 @@ namespace ChillWithYou_SpotifyMod
         {
             Plugin.RunOnMainThread(() =>
             {
-                _connectRow.SetActive(false);
-                _controlsRow.SetActive(true);
-                _playlistHeader.SetActive(true);
-                _queueList.SetActive(true);
-                if (_searchRow != null) _searchRow.SetActive(true);
-                // section เพิ่งสูงขึ้น (playlist header + แถบ search โผล่มาแทน connect row) ต้อง rebuild
-                // scroll content ชั้นนอกด้วย ไม่งั้นแถวเพลงของเกม (sibling ถัดจาก section เรา) ไม่เลื่อนลง
-                // แล้ววาดทับ header/แถบ search - อาการเดียวกับตอน BuildSearchResults/BuildMyPlaylistRows
-                if (_cachedScrollRect != null)
-                    LayoutRebuilder.ForceRebuildLayoutImmediate(_cachedScrollRect.content);
+                // VM ตั้ง NeedsReflow ให้เอง (section สูงขึ้นเพราะ header/search โผล่มาแทน connect row)
+                Apply(_vm.LoginSucceeded());
                 SafeFireAndForget(RefreshNowPlaying());
             });
         }
 
         private static void OnLoginFailed(string error)
         {
-            Plugin.RunOnMainThread(() =>
-            {
-                if (_statusText != null) _statusText.text = "Connect failed: " + error;
-            });
+            Plugin.RunOnMainThread(() => Apply(_vm.LoginFailed(error)));
         }
 
         // เรียกจาก RefreshNowPlaying เท่านั้น เมื่อ context playlist เปลี่ยนไปจากที่จำไว้
@@ -515,19 +512,13 @@ namespace ChillWithYou_SpotifyMod
             {
                 // album: ทุกเพลงในอัลบั้มใช้ปกเดียวกันอยู่แล้ว ยืมปกของเพลงที่เล่นอยู่มาใช้เป็นปก header ได้เลย
                 // artist: ปกจะเปลี่ยนไปตามอัลบั้มของแต่ละเพลง ใช้ไม่ได้ -> ส่ง null แล้วซ่อนช่องรูปแทน
-                byte[] cover = IsArtistContext(contextUri) ? null : info?.ThumbnailBytes;
+                byte[] cover = SpotifyContext.IsArtist(contextUri) ? null : info?.ThumbnailBytes;
                 return await RefreshQueueContext(contextUri, info?.Artist, cover);
             }
 
             // 21 = เพลงปัจจุบัน + คิวอีก 20 ซึ่งเป็นเพดานสูงสุดที่ /me/player/queue ให้มา (ไม่มี pagination ต่อ)
             PlaylistInfo playlist = await SpotifyWebApi.GetCurrentPlaylistAsync(playlistContextId, maxTracks: 21);
-            Plugin.RunOnMainThread(() =>
-            {
-                ApplyPlaylist(playlist);
-                // ต้องบังคับ rebuild ไม่งั้น ScrollRect content ไม่ขยายตามแถวที่เพิ่งเพิ่ม เพลงเลยดูเหมือนไม่ขึ้น
-                if (_cachedScrollRect != null)
-                    LayoutRebuilder.ForceRebuildLayoutImmediate(_cachedScrollRect.content);
-            });
+            Plugin.RunOnMainThread(() => Apply(_vm.ContextLoaded(playlist)));
             return playlist != null && playlist.Id == playlistContextId && playlist.Tracks != null;
         }
 
@@ -538,160 +529,8 @@ namespace ChillWithYou_SpotifyMod
             PlaylistInfo queueInfo = await SpotifyWebApi.GetContextQueueAsync(contextUri, displayName, coverBytes, maxTracks: 21);
             if (queueInfo == null) return false;
 
-            Plugin.RunOnMainThread(() =>
-            {
-                ApplyPlaylist(queueInfo);
-                if (_cachedScrollRect != null)
-                    LayoutRebuilder.ForceRebuildLayoutImmediate(_cachedScrollRect.content);
-            });
+            Plugin.RunOnMainThread(() => Apply(_vm.ContextLoaded(queueInfo)));
             return true;
-        }
-
-        // "spotify:album:xxx" -> "ALBUM" / คืน null เมื่อไม่มี context uri หรือเป็นชนิดที่ไม่รู้จัก
-        // (ให้ผู้เรียกซ่อน label ไปเลย ดีกว่าเดาผิดแล้วบอกผู้เล่นว่ากำลังเล่นจากอะไรที่ไม่จริง)
-        private static string ContextKindLabel(string contextUri)
-        {
-            if (string.IsNullOrEmpty(contextUri)) return null;
-            if (contextUri.StartsWith("spotify:playlist:")) return "PLAYLIST";
-            if (contextUri.StartsWith("spotify:album:")) return "ALBUM";
-            if (contextUri.StartsWith("spotify:artist:")) return "ARTIST";
-            return null;
-        }
-
-        private static bool IsArtistContext(string contextUri) =>
-            !string.IsNullOrEmpty(contextUri) && contextUri.StartsWith("spotify:artist:");
-
-        private static void ApplyPlaylist(PlaylistInfo playlist)
-        {
-            if (_queueList == null) return;
-
-            if (playlist == null)
-            {
-                // ไม่ได้เล่นจาก context ใดๆ ตอนนี้ (เช่น เล่นเพลงเดี่ยวๆ) -> เคลียร์ของเก่าทิ้ง
-                if (_playlistNameText != null) _playlistNameText.text = "Not playing from a playlist";
-                if (_playlistSubText != null) _playlistSubText.gameObject.SetActive(false);
-                ClearChildren(_queueList.transform);
-                _queueRowTitles.Clear();
-                return;
-            }
-
-            if (_playlistNameText != null) _playlistNameText.text = playlist.Name ?? "-";
-            if (_playlistSubText != null)
-            {
-                // บอกให้ตรงกับสิ่งที่กดเล่นจริง ไม่งั้นเล่นจากศิลปิน/อัลบั้มแล้วยังขึ้นว่า PLAYLIST
-                string kind = ContextKindLabel(playlist.ContextUri);
-                _playlistSubText.gameObject.SetActive(kind != null);
-                if (kind != null) _playlistSubText.text = $"PLAYING FROM {kind}";
-            }
-
-            // artist ไม่มีปกให้ใช้ (คิวเพลงไม่ได้ให้ภาพของตัว context มา) -> ซ่อนช่องรูปไปเลย
-            // เอาแค่ชื่อศิลปินพอ ดีกว่าโชว์กล่อง placeholder เทาเปล่าๆ ค้างไว้
-            bool showCover = !IsArtistContext(playlist.ContextUri);
-            if (_playlistImage != null) _playlistImage.gameObject.SetActive(showCover);
-
-            if (showCover && playlist.CoverImageBytes != null && playlist.CoverImageBytes.Length > 0)
-            {
-                Texture2D tex = new Texture2D(2, 2);
-                if (tex.LoadImage(playlist.CoverImageBytes) && _playlistImage != null)
-                {
-                    Sprite sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
-                    _playlistImage.sprite = sprite;
-                    _playlistImage.color = Color.white; // ล้าง tint เทาของ placeholder ไม่งั้นรูปโดนคูณสีจนคล้ำ
-                }
-            }
-            else if (showCover && _playlistImage != null)
-            {
-                // ไม่มีปกมาด้วย -> รีเซ็ตกลับ placeholder กันภาพปกของ playlist ก่อนหน้าค้างแสดงผิดอัน
-                _playlistImage.sprite = null;
-                _playlistImage.color = SpotifyUiKit.CoverPlaceholder;
-            }
-
-            ClearChildren(_queueList.transform);
-            _queueRowTitles.Clear();
-
-            Plugin.Log.LogInfo($"[SpotifyPatches] ApplyPlaylist: '{playlist.Name}' tracks={playlist.Tracks?.Count ?? -1}, " +
-                $"queueActive={_queueList.activeInHierarchy}, sectionActive={(_spotifySection != null && _spotifySection.activeInHierarchy)}");
-
-            if (playlist.Tracks == null || playlist.Tracks.Count == 0)
-            {
-                // โหลดรายชื่อเพลงไม่ได้ (เช่น Daily Mix / Discover Weekly ที่ Spotify ปิด API access ไปแล้ว)
-                Text msg = SpotifyUiKit.CreateText(_queueList.transform, "Track list not available for this playlist", 11, TextAnchor.MiddleLeft);
-                msg.color = SpotifyUiKit.TextFaint;
-                return;
-            }
-
-            for (int i = 0; i < playlist.Tracks.Count; i++)
-            {
-                PlaylistTrackInfo t = playlist.Tracks[i];
-                string capturedTrackId = t.Id;
-                string capturedContextUri = playlist.ContextUri;
-                // artist: กดเลือกเพลงไม่ได้ ยืนยันด้วยการทดสอบจริงแล้วว่า Spotify ปฏิเสธ offset ใน
-                // artist context (ตรงกับที่เอกสารบอกว่า offset รองรับแค่ album/playlist) และเล่นเพลง
-                // เดี่ยวแทนก็ทำให้หลุด context จน next/prev ไม่เดินตามศิลปินต่อ -> แสดงคิวอย่างเดียว
-                bool rowClickable = !IsArtistContext(playlist.ContextUri);
-                GameObject row = new GameObject("PlaylistRow_" + i);
-                row.transform.SetParent(_queueList.transform, worldPositionStays: false);
-                row.AddComponent<RectTransform>();
-                LayoutElement rowLe = row.AddComponent<LayoutElement>();
-                rowLe.preferredHeight = 36f; // พอสำหรับ 2 บรรทัด (title 12pt + artist 10pt) ของฟอนต์เกม
-                rowLe.minHeight = 36f;
-
-                HorizontalLayoutGroup rowHlg = row.AddComponent<HorizontalLayoutGroup>();
-                rowHlg.childForceExpandWidth = false;
-                rowHlg.childControlWidth = true;
-                rowHlg.childControlHeight = true;
-                rowHlg.spacing = 6f;
-                rowHlg.childAlignment = TextAnchor.MiddleLeft;
-
-                if (rowClickable && !string.IsNullOrEmpty(capturedTrackId))
-                {
-                    Image rowBg = row.AddComponent<Image>();
-                    rowBg.color = new Color(0f, 0f, 0f, 0f); // โปร่งใส มีไว้รับคลิกให้ทั้งแถวเท่านั้น
-                    Button rowBtn = row.AddComponent<Button>();
-                    // แถวเพลงไม่มี effect ตอนชี้/กดเลย - ชื่อเพลงเปลี่ยนเป็นสีเขียวตอนเริ่มเล่นคือ feedback อยู่แล้ว
-                    rowBtn.transition = Selectable.Transition.None;
-                    rowBtn.targetGraphic = rowBg;
-                    rowBtn.onClick.AddListener(() => SafeFireAndForget(PlayTrackInPlaylist(capturedContextUri, capturedTrackId)));
-                }
-
-                SpotifyUiKit.CreateInlineText(row.transform, (i + 1).ToString(), 18f);
-
-                GameObject nameCol = new GameObject("NameCol");
-                nameCol.transform.SetParent(row.transform, worldPositionStays: false);
-                nameCol.AddComponent<RectTransform>();
-                LayoutElement nameColLe = nameCol.AddComponent<LayoutElement>();
-                nameColLe.flexibleWidth = 1f;
-                VerticalLayoutGroup nameColVlg = nameCol.AddComponent<VerticalLayoutGroup>();
-                nameColVlg.childControlWidth = true;
-                nameColVlg.childControlHeight = true;
-                nameColVlg.childForceExpandWidth = true;
-
-                Text nameText = SpotifyUiKit.CreateText(nameCol.transform, t.Title ?? "-", 12, TextAnchor.MiddleLeft);
-                Text artistText = SpotifyUiKit.CreateText(nameCol.transform, t.Artist ?? "-", 10, TextAnchor.MiddleLeft);
-                artistText.color = SpotifyUiKit.TextFaint;
-                SpotifyUiKit.ClipRowToSingleLine(nameCol, nameText, artistText);
-
-                if (!string.IsNullOrEmpty(capturedTrackId))
-                    _queueRowTitles.Add((capturedTrackId, nameText));
-
-                TimeSpan dur = TimeSpan.FromMilliseconds(t.DurationMs);
-                SpotifyUiKit.CreateInlineText(row.transform, FormatTime(dur), 40f);
-            }
-
-            UpdateQueueHighlight();
-        }
-
-        // ทาสีชื่อเพลงที่ trackId ตรงกับเพลงที่กำลังเล่นอยู่ (_currentTrackId) เป็นเขียว Spotify ส่วนเพลงอื่นคืนสีขาวปกติ
-        // แยกออกมาต่างหากจาก ApplyPlaylist เพราะเพลงเปลี่ยนบ่อยกว่ารายชื่อ queue มาก ไม่ต้อง rebuild ทั้ง list ทุกครั้ง
-        private static void UpdateQueueHighlight()
-        {
-            foreach (var (trackId, title) in _queueRowTitles)
-            {
-                if (title == null) continue; // แถวโดน destroy ไปแล้ว (Unity เทียบ null ได้กับ destroyed object)
-                title.color = (!string.IsNullOrEmpty(_currentTrackId) && trackId == _currentTrackId)
-                    ? SpotifyUiKit.ButtonActive // เขียว Spotify ตัวเดียวกับ progress bar
-                    : Color.white;
-            }
         }
 
         private static void ClearChildren(Transform parent)
@@ -750,56 +589,22 @@ namespace ChillWithYou_SpotifyMod
                 return;
             }
 
+            // นาฬิกา interpolate เป็นของ NowPlayingSession (hot path ทุกเฟรม) - sync ตรงนี้
+            // ส่วนข้อความ/glyph/highlight เป็นของ VM
             if (info == null || string.IsNullOrEmpty(info.Title))
             {
                 _session.Clear();
-                if (_trackTitleText != null)
-                    _trackTitleText.text = "Connect Spotify and play a song on any device to see controls";
-                if (_artistText != null) _artistText.text = "";
-                if (_posText != null) _posText.text = "0:00";
-                if (_durText != null) _durText.text = "0:00";
-                if (_progressSlider != null) _progressSlider.value = 0f;
-                _currentTrackId = null;
-                UpdateQueueHighlight();
-                return;
             }
-
-            // highlight ชื่อเพลงที่กำลังเล่นใน queue list ให้ตรงกับเพลงปัจจุบันเสมอ
-            if (_currentTrackId != info.TrackId)
+            else
             {
-                _currentTrackId = info.TrackId;
-                UpdateQueueHighlight();
+                // ตั้ง "จุด sync" ใหม่จากข้อมูลจริงที่เพิ่ง poll มา ให้ Tick() คำนวณ interpolate ต่อจากตรงนี้
+                // แทนที่จะ set slider ตรงๆ ทุกครั้งที่ poll (ซึ่งจะทำให้ progress ขยับเป็นสเต็ปทุก 5 วิ)
+                _session.Sync(info.Position, info.Duration, info.IsPlaying, DateTime.UtcNow);
+                _songEndTriggerFired = false; // เพลงใหม่มาแล้ว (หรือ resync) รีเซ็ตให้ตรวจจับเพลงจบรอบถัดไปได้อีก
+                EnsureSubscribedToTick();
             }
 
-            if (_trackTitleText != null) _trackTitleText.text = info.Title;
-            if (_artistText != null) _artistText.text = info.Artist ?? "-";
-
-            // ตั้ง "จุด sync" ใหม่จากข้อมูลจริงที่เพิ่ง poll มา ให้ Tick() คำนวณ interpolate ต่อจากตรงนี้
-            // แทนที่จะ set slider ตรงๆ ทุกครั้งที่ poll (ซึ่งจะทำให้ progress ขยับเป็นสเต็ปทุก 5 วิ)
-            _session.Sync(info.Position, info.Duration, info.IsPlaying, DateTime.UtcNow);
-            _songEndTriggerFired = false; // เพลงใหม่มาแล้ว (หรือ resync) รีเซ็ตให้ตรวจจับเพลงจบรอบถัดไปได้อีก
-            EnsureSubscribedToTick();
-
-            if (_playPauseLabel != null) _playPauseLabel.text = info.IsPlaying ? "||" : ">";
-
-            // โหลด cover art ก็ต้องอยู่บน main thread ด้วย (สร้าง Texture2D ใหม่)
-            // ข้ามได้เมื่อเป็น bytes ชุดเดิม (reference เดิมจาก cache) และปกยังแสดงอยู่บนจอ
-            if (info.ThumbnailBytes != null && info.ThumbnailBytes.Length > 0
-                && (!ReferenceEquals(info.ThumbnailBytes, _lastAppliedCoverBytes)
-                    || _coverImage == null || _coverImage.sprite == null))
-            {
-                Texture2D tex = new Texture2D(2, 2);
-                if (tex.LoadImage(info.ThumbnailBytes))
-                {
-                    Sprite sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
-                    if (_coverImage != null)
-                    {
-                        _coverImage.sprite = sprite;
-                        _coverImage.color = Color.white; // ล้าง tint เทาของ placeholder ไม่งั้นรูปโดนคูณสีจนคล้ำ
-                        _lastAppliedCoverBytes = info.ThumbnailBytes;
-                    }
-                }
-            }
+            Apply(_vm.NowPlayingUpdated(info));
         }
 
         // ใช้ Canvas.willRenderCanvases แทน Update() ของ component เอง (เกมนี้ไม่เรียก Update()
@@ -844,8 +649,8 @@ namespace ChillWithYou_SpotifyMod
 
             PlaybackFrame frame = _session.Tick(DateTime.UtcNow);
 
-            _posText.text = FormatTime(frame.Position);
-            _durText.text = FormatTime(frame.Duration);
+            _posText.text = PanelViewModel.FormatTime(frame.Position);
+            _durText.text = PanelViewModel.FormatTime(frame.Duration);
             _progressSlider.value = frame.Fraction;
 
             // เพลงจบตามนาฬิกาเราเอง (ยังไม่ได้ยิง API เลยสักครั้งตอนนี้) -> ยิงครั้งเดียวเพื่อดึงเพลงถัดไป
@@ -856,12 +661,6 @@ namespace ChillWithYou_SpotifyMod
                 _songEndTriggerFired = true;
                 SafeFireAndForget(RefreshNowPlaying());
             }
-        }
-
-        private static string FormatTime(TimeSpan t)
-        {
-            if (t.TotalHours >= 1) return $"{(int)t.TotalHours}:{t.Minutes:00}:{t.Seconds:00}";
-            return $"{t.Minutes}:{t.Seconds:00}";
         }
 
         private static async void SafeFireAndForget(Task task)
@@ -882,67 +681,25 @@ namespace ChillWithYou_SpotifyMod
             Plugin.Log.LogInfo($"[SpotifyPatches] Search: '{query}'");
 
             SpotifySearchResults results = await SpotifySearchApi.SearchAsync(query, limitPerType: 5);
-            Plugin.RunOnMainThread(() => BuildSearchResults(results));
+            Plugin.RunOnMainThread(() => Apply(_vm.SearchResultsArrived(results)));
         }
 
-        // toggle รายชื่อ playlist ของ user ในพื้นที่ผลค้นหา: กดครั้งแรกแสดง กดซ้ำหุบกลับ
-        // ข้อมูลถูก cache ทั้ง session ฝั่ง SpotifyWebApi - กดกี่รอบก็ยิง API แค่ครั้งแรกครั้งเดียว
-        private static bool _showingMyPlaylists;
-
+        // toggle รายชื่อ playlist ของ user ในพื้นที่ผลค้นหา: กดครั้งแรกแสดง กดซ้ำหุบกลับ (VM เป็นคนถือ
+        // สถานะ toggle) - ข้อมูลถูก cache ทั้ง session ฝั่ง SpotifyWebApi กดกี่รอบก็ยิง API แค่ครั้งแรก
         private static async Task OnMyPlaylistsClicked()
         {
             if (!SpotifyAuth.IsLoggedIn) return;
 
-            if (_showingMyPlaylists)
+            // onClick เริ่มบน main thread และยังไม่ได้ await -> คุยกับ VM ตรงนี้ได้เลย
+            if (!_vm.MyListsClicked())
             {
-                _showingMyPlaylists = false;
-                Plugin.RunOnMainThread(() =>
-                {
-                    if (_searchResultsList == null) return;
-                    ClearChildren(_searchResultsList.transform);
-                    LayoutRebuilder.ForceRebuildLayoutImmediate(_searchResultsList.GetComponent<RectTransform>());
-                    if (_cachedScrollRect != null)
-                        LayoutRebuilder.ForceRebuildLayoutImmediate(_cachedScrollRect.content);
-                });
+                Apply(_vm.Current); // หุบรายการที่โชว์อยู่ ไม่ต้อง fetch
                 return;
             }
 
             System.Collections.Generic.List<UserPlaylistInfo> playlists =
                 await SpotifyWebApi.GetMyPlaylistsAsync(limit: 20);
-            Plugin.RunOnMainThread(() => BuildMyPlaylistRows(playlists));
-        }
-
-        private static void BuildMyPlaylistRows(System.Collections.Generic.List<UserPlaylistInfo> playlists)
-        {
-            if (_searchResultsList == null) return;
-            ClearChildren(_searchResultsList.transform);
-            _showingMyPlaylists = true;
-
-            SpotifyUiKit.CreateSectionLabel(_searchResultsList.transform, "My Playlists");
-
-            if (playlists == null || playlists.Count == 0)
-            {
-                Text msg = SpotifyUiKit.CreateText(_searchResultsList.transform,
-                    playlists == null ? "Failed to load playlists, try again" : "No playlists in this account",
-                    11, TextAnchor.MiddleLeft);
-                msg.color = new Color(0.65f, 0.65f, 0.65f, 1f);
-            }
-            else
-            {
-                foreach (UserPlaylistInfo p in playlists)
-                {
-                    UserPlaylistInfo captured = p;
-                    // สั่งเล่นทั้ง playlist ผ่าน context_uri (อ่าน track list ตรงๆ โดนบล็อกใน dev mode อยู่แล้ว)
-                    // พอเริ่มเล่น RefreshNowPlaying จะเห็น context ใหม่แล้วอัปเดตชื่อ/ปก/คิวให้เองอัตโนมัติ
-                    BuildSearchRow(_searchResultsList.transform,
-                        p.Name, $"{p.TrackCount} tracks", null,
-                        () => SafeFireAndForget(PlayContext($"spotify:playlist:{captured.Id}")));
-                }
-            }
-
-            LayoutRebuilder.ForceRebuildLayoutImmediate(_searchResultsList.GetComponent<RectTransform>());
-            if (_cachedScrollRect != null)
-                LayoutRebuilder.ForceRebuildLayoutImmediate(_cachedScrollRect.content);
+            Plugin.RunOnMainThread(() => Apply(_vm.MyPlaylistsArrived(playlists)));
         }
 
         // onEndEdit ยิงทั้งตอนกด Enter และตอน field เสีย focus (คลิกที่อื่น)
@@ -955,92 +712,8 @@ namespace ChillWithYou_SpotifyMod
 
         private static void OnSearchTextChanged(string newText)
         {
-            if (string.IsNullOrWhiteSpace(newText) && _searchResultsList != null)
-            {
-                _showingMyPlaylists = false; // list โดนเคลียร์ toggle ต้องกลับสถานะ "หุบ" ด้วย
-                ClearChildren(_searchResultsList.transform);
-                LayoutRebuilder.ForceRebuildLayoutImmediate(_searchResultsList.GetComponent<RectTransform>());
-                if (_cachedScrollRect != null)
-                    LayoutRebuilder.ForceRebuildLayoutImmediate(_cachedScrollRect.content);
-            }
-        }
-
-        private static void BuildSearchResults(SpotifySearchResults results)
-        {
-            if (_searchResultsList == null) return;
-            _showingMyPlaylists = false; // ผลค้นหาเข้ามาแทนที่รายชื่อ playlist แล้ว
-            ClearChildren(_searchResultsList.transform);
-
-            bool anyResults = (results.Tracks.Count + results.Artists.Count +
-                               results.Albums.Count + results.Playlists.Count) > 0;
-            if (!anyResults) return;
-
-            // --- Tracks ---
-            if (results.Tracks.Count > 0)
-            {
-                SpotifyUiKit.CreateSectionLabel(_searchResultsList.transform, "Tracks");
-                foreach (SearchTrackResult t in results.Tracks)
-                {
-                    SearchTrackResult captured = t;
-                    string dur = FormatTime(TimeSpan.FromMilliseconds(t.DurationMs));
-                    BuildSearchRow(_searchResultsList.transform,
-                        t.Title, t.Artist, dur,
-                        () => SafeFireAndForget(PlayTrack(captured.Id)));
-                }
-            }
-
-            // --- Artists ---
-            if (results.Artists.Count > 0)
-            {
-                SpotifyUiKit.CreateSectionLabel(_searchResultsList.transform, "Artists");
-                foreach (SearchArtistResult a in results.Artists)
-                {
-                    SearchArtistResult captured = a;
-                    // สั่งเล่น artist context ไปเลย - ดึงรายชื่อเพลงของศิลปินมาแสดงก่อนไม่ได้แล้ว เพราะ
-                    // /artists/{id}/top-tracks กับ /artists/{id}/albums ถูกตัดจาก Development Mode
-                    // ตั้งแต่ Spotify Web API รอบ ก.พ. 2026 (playback control ยังใช้ได้ปกติ)
-                    // พอเริ่มเล่น RefreshNowPlaying จะเห็น context ใหม่แล้วเติมชื่อ/ปก/คิวให้เอง
-                    BuildSearchRow(_searchResultsList.transform,
-                        a.Name, "Artist", null,
-                        () => SafeFireAndForget(PlayContext($"spotify:artist:{captured.Id}")));
-                }
-            }
-
-            // --- Albums ---
-            if (results.Albums.Count > 0)
-            {
-                SpotifyUiKit.CreateSectionLabel(_searchResultsList.transform, "Albums");
-                foreach (SearchAlbumResult al in results.Albums)
-                {
-                    SearchAlbumResult captured = al;
-                    BuildSearchRow(_searchResultsList.transform,
-                        al.Name, al.ArtistName, null,
-                        () => SafeFireAndForget(LoadAlbumTracks(captured.Id, captured.Name, captured.CoverUrl)));
-                }
-            }
-
-            // --- Playlists ---
-            if (results.Playlists.Count > 0)
-            {
-                SpotifyUiKit.CreateSectionLabel(_searchResultsList.transform, "Playlists");
-                foreach (SearchPlaylistResult p in results.Playlists)
-                {
-                    SearchPlaylistResult captured = p;
-                    // สั่งเล่น playlist เลยแทนการโหลดรายชื่อเพลงมาแสดง (อ่าน track list ตรงๆ โดน Spotify
-                    // บล็อกสำหรับ dev-mode app อยู่แล้ว) - พอเริ่มเล่น RefreshNowPlaying จะเห็น context ใหม่
-                    // แล้วอัปเดตชื่อ/ปก/คิวเพลงของ playlist นี้ในหน้า playlist ให้เองอัตโนมัติ
-                    BuildSearchRow(_searchResultsList.transform,
-                        p.Name, p.OwnerName ?? "-", null,
-                        () => SafeFireAndForget(PlayContext($"spotify:playlist:{captured.Id}")));
-                }
-            }
-
-            LayoutRebuilder.ForceRebuildLayoutImmediate(
-                _searchResultsList.GetComponent<RectTransform>());
-            // ต้อง rebuild content ชั้นนอกด้วย ไม่งั้น section เราไม่สูงขึ้นตามผลค้นหา แล้ว track list
-            // ของเกม (ที่เป็น sibling ถัดจาก section เรา) ไม่เลื่อนลง เลยวาดทับผลค้นหา (เหมือน My Lists ทำ)
-            if (_cachedScrollRect != null)
-                LayoutRebuilder.ForceRebuildLayoutImmediate(_cachedScrollRect.content);
+            if (string.IsNullOrWhiteSpace(newText))
+                Apply(_vm.SearchCleared());
         }
 
         // สั่งเล่นเพลงเดียว (ผลค้นหาประเภท track) - หลุดจาก context ที่เล่นอยู่
@@ -1065,10 +738,11 @@ namespace ChillWithYou_SpotifyMod
         }
 
         // ทุกคำสั่งเล่นจบเหมือนกัน: จำเพลงก่อนสั่ง แล้วตาม refresh จนเห็นว่า Spotify สลับให้แล้ว
+        // (เรียกจาก onClick ซึ่งอยู่บน main thread จนกว่าจะถึง await แรก - อ่าน VM ตรงนี้ได้)
         private static async Task PlayThen(Func<Task<bool>> command)
         {
             if (!SpotifyAuth.IsLoggedIn) return;
-            string trackBefore = _currentTrackId;
+            string trackBefore = _vm.Current.HighlightedTrackId;
             await command();
             await RefreshAfterPlay(trackBefore, _lastSeenContextUri);
         }
@@ -1081,24 +755,146 @@ namespace ChillWithYou_SpotifyMod
             PlaylistInfo albumInfo = await SpotifyWebApi.GetAlbumTracksAsync(albumId, albumName, coverUrl);
             if (albumInfo == null) return; // โหลดพลาด - ปล่อยของเดิมค้างไว้ดีกว่าล้างจอเป็นว่าง
 
-            Plugin.RunOnMainThread(() =>
-            {
-                if (_playlistHeader != null) _playlistHeader.SetActive(true);
-                if (_queueList != null) _queueList.SetActive(true);
-                ApplyPlaylist(albumInfo);
-                if (_cachedScrollRect != null)
-                    LayoutRebuilder.ForceRebuildLayoutImmediate(_cachedScrollRect.content);
-            });
+            Plugin.RunOnMainThread(() => Apply(_vm.ContextLoaded(albumInfo)));
         }
 
-
-        private static void BuildSearchRow(Transform parent, string title, string sub, string right, UnityEngine.Events.UnityAction onClick)
+        // === Apply: จุดเดียวที่แปลง PanelState -> Unity UI ===
+        // idempotent ทั้งก้อน - SetActive/ตั้งข้อความซ้ำค่าเดิมได้ไม่มีผลข้างเคียง ส่วน list rebuild
+        // เฉพาะตอน revision ขยับ และ reflow ตาม flag เท่านั้น การ "ลืม" จุดใดจุดหนึ่งเลยเกิดไม่ได้
+        // ตราบใดที่ทุก event เดินผ่านทางนี้ (ต้นเหตุบั๊ก 3 ใน 6 ตัวของ v1.1.2)
+        private static void Apply(PanelState s)
         {
-            GameObject row = new GameObject("SearchRow");
+            if (_spotifySection == null) return;
+
+            if (_connectRow != null) _connectRow.SetActive(s.ConnectRowVisible);
+            if (_controlsRow != null) _controlsRow.SetActive(s.ControlsRowVisible);
+            if (_playlistHeader != null) _playlistHeader.SetActive(s.PlaylistHeaderVisible);
+            if (_queueList != null) _queueList.SetActive(s.QueueListVisible);
+            if (_searchRow != null) _searchRow.SetActive(s.SearchRowVisible);
+
+            if (_statusText != null) _statusText.text = s.StatusText ?? "";
+            if (_trackTitleText != null) _trackTitleText.text = s.TrackTitle;
+            if (_artistText != null) _artistText.text = s.TrackArtist;
+            if (_playPauseLabel != null) _playPauseLabel.text = s.PlayPauseGlyph;
+
+            // ตอนไม่มีเพลง แสดงเวลา/บาร์เป็นศูนย์ - ตอนมีเพลง hot path (TickProgressBar) เป็นเจ้าของ
+            if (s.ShowIdleProgress)
+            {
+                if (_posText != null) _posText.text = "0:00";
+                if (_durText != null) _durText.text = "0:00";
+                if (_progressSlider != null) _progressSlider.value = 0f;
+            }
+
+            ApplyNowPlayingCover(s.NowPlayingCoverBytes);
+            ApplyHeader(s);
+
+            if (s.QueueRevision != _appliedQueueRev)
+            {
+                _appliedQueueRev = s.QueueRevision;
+                if (_queueList != null)
+                {
+                    ClearChildren(_queueList.transform);
+                    _queueRowTitles.Clear();
+                    if (s.QueueMessage != null)
+                    {
+                        Text msg = SpotifyUiKit.CreateText(_queueList.transform, s.QueueMessage, 11, TextAnchor.MiddleLeft);
+                        msg.color = SpotifyUiKit.TextFaint;
+                    }
+                    else
+                    {
+                        foreach (PanelRow row in s.QueueRows)
+                            RenderRow(_queueList.transform, row);
+                    }
+                }
+            }
+
+            // ทาสีทุกรอบ (ถูกกว่า rebuild มาก) - เพลงเปลี่ยนบ่อยกว่ารายชื่อคิวเยอะ
+            RecolorHighlight(s.HighlightedTrackId);
+
+            if (s.ResultsRevision != _appliedResultsRev)
+            {
+                _appliedResultsRev = s.ResultsRevision;
+                if (_searchResultsList != null)
+                {
+                    ClearChildren(_searchResultsList.transform);
+                    foreach (PanelSection section in s.ResultsSections)
+                    {
+                        if (section.Label != null)
+                            SpotifyUiKit.CreateSectionLabel(_searchResultsList.transform, section.Label);
+                        if (section.Message != null)
+                        {
+                            Text msg = SpotifyUiKit.CreateText(_searchResultsList.transform, section.Message, 11, TextAnchor.MiddleLeft);
+                            msg.color = new Color(0.65f, 0.65f, 0.65f, 1f);
+                        }
+                        foreach (PanelRow row in section.Rows)
+                            RenderRow(_searchResultsList.transform, row);
+                    }
+                }
+            }
+
+            // โครงสร้างเปลี่ยน (แถวโผล่/หาย, list เปลี่ยน) -> ต้อง rebuild scroll content ชั้นนอกด้วย
+            // ไม่งั้น section เราไม่สูงขึ้นตามเนื้อหา แล้วแถวเพลงของเกม (sibling ถัดไป) วาดทับของเรา
+            if (s.NeedsReflow && _cachedScrollRect != null)
+            {
+                if (_searchResultsList != null)
+                    LayoutRebuilder.ForceRebuildLayoutImmediate(_searchResultsList.GetComponent<RectTransform>());
+                LayoutRebuilder.ForceRebuildLayoutImmediate(_cachedScrollRect.content);
+            }
+        }
+
+        // ปกเพลงที่กำลังเล่น - สร้าง Texture2D เฉพาะตอน bytes เป็นชุดใหม่จริงๆ (Apply ถูกเรียก
+        // ทุก event ถ้าสร้างทุกรอบ texture จะรั่วเรื่อยๆ) / null = คงปกเดิมไว้ (พฤติกรรมเดิม)
+        private static void ApplyNowPlayingCover(byte[] bytes)
+        {
+            if (bytes == null || bytes.Length == 0 || _coverImage == null) return;
+            if (ReferenceEquals(bytes, _lastAppliedCoverBytes) && _coverImage.sprite != null) return;
+
+            Texture2D tex = new Texture2D(2, 2);
+            if (!tex.LoadImage(bytes)) return;
+            _coverImage.sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
+            _coverImage.color = Color.white; // ล้าง tint เทาของ placeholder ไม่งั้นรูปโดนคูณสีจนคล้ำ
+            _lastAppliedCoverBytes = bytes;
+        }
+
+        private static void ApplyHeader(PanelState s)
+        {
+            if (_playlistNameText != null) _playlistNameText.text = s.HeaderName;
+            if (_playlistSubText != null)
+            {
+                _playlistSubText.gameObject.SetActive(s.HeaderSubLabel != null);
+                if (s.HeaderSubLabel != null) _playlistSubText.text = s.HeaderSubLabel;
+            }
+
+            if (_playlistImage == null) return;
+            _playlistImage.gameObject.SetActive(s.HeaderCoverVisible);
+
+            if (s.HeaderCoverVisible && s.HeaderCoverBytes != null && s.HeaderCoverBytes.Length > 0)
+            {
+                if (ReferenceEquals(s.HeaderCoverBytes, _lastAppliedHeaderCoverBytes) && _playlistImage.sprite != null)
+                    return;
+                Texture2D tex = new Texture2D(2, 2);
+                if (!tex.LoadImage(s.HeaderCoverBytes)) return;
+                _playlistImage.sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
+                _playlistImage.color = Color.white;
+                _lastAppliedHeaderCoverBytes = s.HeaderCoverBytes;
+            }
+            else
+            {
+                // ไม่มีปก -> กลับ placeholder กันภาพปกของ playlist ก่อนหน้าค้างแสดงผิดอัน
+                _playlistImage.sprite = null;
+                _playlistImage.color = SpotifyUiKit.CoverPlaceholder;
+                _lastAppliedHeaderCoverBytes = null;
+            }
+        }
+
+        // วาดแถวหนึ่งตาม PanelRow (ใช้ร่วมกันทั้งคิวเพลงและพื้นที่ผลค้นหา/My Lists)
+        private static void RenderRow(Transform parent, PanelRow rowSpec)
+        {
+            GameObject row = new GameObject("Row");
             row.transform.SetParent(parent, worldPositionStays: false);
             row.AddComponent<RectTransform>();
             LayoutElement rowLe = row.AddComponent<LayoutElement>();
-            rowLe.preferredHeight = 36f; // พอสำหรับ 2 บรรทัด (name 12pt + sub 10pt) ของฟอนต์เกม
+            rowLe.preferredHeight = 36f; // พอสำหรับ 2 บรรทัด (title 12pt + sub 10pt) ของฟอนต์เกม
             rowLe.minHeight = 36f;
 
             HorizontalLayoutGroup rowHlg = row.AddComponent<HorizontalLayoutGroup>();
@@ -1108,19 +904,21 @@ namespace ChillWithYou_SpotifyMod
             rowHlg.spacing = 6f;
             rowHlg.childAlignment = TextAnchor.MiddleLeft;
 
-            // ถ้ามี action ทำ row ทั้งแถวกดได้
-            if (onClick != null)
+            if (rowSpec.Action.Kind != RowActionKind.None)
             {
+                RowAction captured = rowSpec.Action;
                 Image rowBg = row.AddComponent<Image>();
                 rowBg.color = new Color(0f, 0f, 0f, 0f); // โปร่งใส มีไว้รับคลิกให้ทั้งแถวเท่านั้น
                 Button rowBtn = row.AddComponent<Button>();
-                // แถวผลค้นหาไม่มี effect ตอนชี้/กด เหมือนแถวคิวเพลง
+                // แถวไม่มี effect ตอนชี้/กดเลย - ชื่อเพลงเปลี่ยนเป็นสีเขียวตอนเริ่มเล่นคือ feedback อยู่แล้ว
                 rowBtn.transition = Selectable.Transition.None;
                 rowBtn.targetGraphic = rowBg;
-                rowBtn.onClick.AddListener(onClick);
+                rowBtn.onClick.AddListener(() => Dispatch(captured));
             }
 
-            // title + sub col
+            if (rowSpec.Index != null)
+                SpotifyUiKit.CreateInlineText(row.transform, rowSpec.Index, 18f);
+
             GameObject nameCol = new GameObject("NameCol");
             nameCol.transform.SetParent(row.transform, worldPositionStays: false);
             nameCol.AddComponent<RectTransform>();
@@ -1132,20 +930,54 @@ namespace ChillWithYou_SpotifyMod
             nameVlg.childForceExpandWidth = true;
             nameVlg.spacing = 1f;
 
-            Text titleText = SpotifyUiKit.CreateText(nameCol.transform, title ?? "-", 12, TextAnchor.MiddleLeft);
+            Text titleText = SpotifyUiKit.CreateText(nameCol.transform, rowSpec.Title ?? "-", 12, TextAnchor.MiddleLeft);
             Text subText = null;
-            if (!string.IsNullOrEmpty(sub))
+            if (!string.IsNullOrEmpty(rowSpec.Sub))
             {
-                subText = SpotifyUiKit.CreateText(nameCol.transform, sub, 10, TextAnchor.MiddleLeft);
-                subText.color = new Color(0.65f, 0.65f, 0.65f, 1f);
+                subText = SpotifyUiKit.CreateText(nameCol.transform, rowSpec.Sub, 10, TextAnchor.MiddleLeft);
+                // แถวคิว (มีเลขลำดับ) ใช้โทนจางของ kit / แถวผลค้นหาใช้เทากลางแบบเดิม
+                subText.color = rowSpec.Index != null ? SpotifyUiKit.TextFaint : new Color(0.65f, 0.65f, 0.65f, 1f);
             }
             SpotifyUiKit.ClipRowToSingleLine(nameCol, titleText, subText);
 
-            if (!string.IsNullOrEmpty(right))
-                SpotifyUiKit.CreateInlineText(row.transform, right, 36f);
+            if (!string.IsNullOrEmpty(rowSpec.Right))
+                SpotifyUiKit.CreateInlineText(row.transform, rowSpec.Right, rowSpec.Index != null ? 40f : 36f);
+
+            // จดคู่ trackId -> Text ไว้ให้ RecolorHighlight ทาสีเพลงที่กำลังเล่น
+            if (!string.IsNullOrEmpty(rowSpec.TrackId))
+                _queueRowTitles.Add((rowSpec.TrackId, titleText));
         }
 
+        // ทาสีชื่อเพลงที่ trackId ตรงกับเพลงที่กำลังเล่นเป็นเขียว Spotify ส่วนเพลงอื่นคืนสีขาวปกติ
+        private static void RecolorHighlight(string highlightedTrackId)
+        {
+            foreach (var (trackId, title) in _queueRowTitles)
+            {
+                if (title == null) continue; // แถวโดน destroy ไปแล้ว (Unity เทียบ null ได้กับ destroyed object)
+                title.color = (!string.IsNullOrEmpty(highlightedTrackId) && trackId == highlightedTrackId)
+                    ? SpotifyUiKit.ButtonActive // เขียว Spotify ตัวเดียวกับ progress bar
+                    : Color.white;
+            }
+        }
 
-
+        // แปลง action descriptor จาก VM เป็น API call จริง - จุดเดียวที่ปุ่มในแถวชนโลกภายนอก
+        private static void Dispatch(RowAction action)
+        {
+            switch (action.Kind)
+            {
+                case RowActionKind.PlayTrack:
+                    SafeFireAndForget(PlayTrack(action.TrackId));
+                    break;
+                case RowActionKind.PlayContext:
+                    SafeFireAndForget(PlayContext(action.ContextUri));
+                    break;
+                case RowActionKind.PlayTrackInContext:
+                    SafeFireAndForget(PlayTrackInPlaylist(action.ContextUri, action.TrackId));
+                    break;
+                case RowActionKind.LoadAlbum:
+                    SafeFireAndForget(LoadAlbumTracks(action.AlbumId, action.AlbumName, action.AlbumCoverUrl));
+                    break;
+            }
+        }
     }
 }

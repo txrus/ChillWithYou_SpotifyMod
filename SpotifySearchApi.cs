@@ -10,45 +10,7 @@ using Newtonsoft.Json.Linq;
 
 namespace ChillWithYou_SpotifyMod
 {
-    public class SearchTrackResult
-    {
-        public string Id;
-        public string Title;
-        public string Artist;
-        public int DurationMs;
-        public string AlbumCoverUrl;
-    }
-
-    public class SearchArtistResult
-    {
-        public string Id;
-        public string Name;
-        public string ImageUrl;
-    }
-
-    public class SearchAlbumResult
-    {
-        public string Id;
-        public string Name;
-        public string ArtistName;
-        public string CoverUrl;
-    }
-
-    public class SearchPlaylistResult
-    {
-        public string Id;
-        public string Name;
-        public string OwnerName;
-        public string CoverUrl;
-    }
-
-    public class SpotifySearchResults
-    {
-        public List<SearchTrackResult> Tracks = new List<SearchTrackResult>();
-        public List<SearchArtistResult> Artists = new List<SearchArtistResult>();
-        public List<SearchAlbumResult> Albums = new List<SearchAlbumResult>();
-        public List<SearchPlaylistResult> Playlists = new List<SearchPlaylistResult>();
-    }
+    // Search*Result / SpotifySearchResults ย้ายไป SpotifyModels.cs
 
     internal static class SpotifySearchApi
     {
