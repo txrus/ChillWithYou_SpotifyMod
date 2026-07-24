@@ -14,21 +14,7 @@ using Newtonsoft.Json.Linq;
 
 namespace ChillWithYou_SpotifyMod
 {
-    public class SpotifyNowPlayingInfo
-    {
-        public string TrackId;
-        public string Title;
-        public string Artist;
-        public bool IsPlaying;
-        public TimeSpan Position;
-        public TimeSpan Duration;
-        public byte[] ThumbnailBytes; // ปกอัลบั้ม โหลดจาก URL ของ Spotify
-        public string PlaylistContextId; // parse จาก context.uri ของ /me/player call เดียวกันนี้เลย
-                                         // ไม่ต้องยิง endpoint แยกเพื่อเช็คว่า playlist เปลี่ยนไหม
-                                         // null เมื่อเล่นจาก context ที่ไม่ใช่ playlist (artist/album) - ดู ContextUri
-        public string ContextUri;        // context.uri ดิบ เช่น spotify:artist:xxx / spotify:album:xxx
-                                         // ใช้เช็คว่า context เปลี่ยนไหม แทน PlaylistContextId ที่เห็นแค่ playlist
-    }
+    // SpotifyNowPlayingInfo ย้ายไป SpotifyModels.cs (ไฟล์ DTO ล้วนที่ test project link-compile ได้)
 
     internal static class SpotifyApi
     {

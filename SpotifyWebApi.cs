@@ -6,33 +6,7 @@ using Newtonsoft.Json.Linq;
 
 namespace ChillWithYou_SpotifyMod
 {
-    public class PlaylistTrackInfo
-    {
-        public string Id;
-        public string Title;
-        public string Artist;
-        public int DurationMs;
-    }
-
-    public class PlaylistInfo
-    {
-        public string Id { get; set; }
-        public string Name { get; set; }
-        public byte[] CoverImageBytes;
-        public List<PlaylistTrackInfo> Tracks;
-
-        // ใช้เป็น context_uri ตอนสั่งเล่นเพลงจากแถวใน list (spotify:playlist:xxx หรือ spotify:album:xxx)
-        // ถ้าเป็น null จะ fallback ไปเล่นทีละเพลงแบบไม่มี context แทน
-        public string ContextUri { get; set; }
-    }
-
-    // รายการ playlist ของ user เองจาก /me/playlists (ใช้แสดงเป็นเมนูให้กดเลือกเล่น)
-    public class UserPlaylistInfo
-    {
-        public string Id;
-        public string Name;
-        public int TrackCount;
-    }
+    // PlaylistTrackInfo / PlaylistInfo / UserPlaylistInfo ย้ายไป SpotifyModels.cs
 
     // ยิงผ่าน SpotifyGateway ทั้งหมด (envelope token/bearer/429/retry รวมอยู่ที่นั่น)
     // ไฟล์นี้เหลือหน้าที่แค่ประกอบ path, cache ผลลัพธ์, และ parse JSON เป็นชนิดข้อมูลข้างบน
