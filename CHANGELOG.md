@@ -2,7 +2,7 @@
 
 รูปแบบอิงตาม [Keep a Changelog](https://keepachangelog.com/) และใช้ [Semantic Versioning](https://semver.org/)
 
-## [Unreleased]
+## [1.3.0] - 2026-07-25
 
 ### Added
 - ลาก (หรือกด) progress bar ในเกมเพื่อ seek ได้แล้ว - ส่ง `PUT /me/player/seek` ครั้งเดียว
