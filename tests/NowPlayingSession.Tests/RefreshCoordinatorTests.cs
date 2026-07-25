@@ -226,6 +226,35 @@ namespace ChillWithYou_SpotifyMod.Tests
             Assert.True(c.IsCurrentPlayCycle(second));
         }
 
+        // === poll ระหว่างแผงเปิดค้าง (ตามให้ทันเวลาสั่งจากมือถือ/แอปบนเครื่อง) ===
+
+        [Fact]
+        public void VisiblePoll_OnlyWhenPanelOpenAndLoggedIn()
+        {
+            var c = new RefreshCoordinator();
+            DateTime t0 = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+
+            Assert.False(c.ShouldPollNowPlaying(panelVisible: false, loggedIn: true, t0));
+            Assert.False(c.ShouldPollNowPlaying(panelVisible: true, loggedIn: false, t0));
+            Assert.True(c.ShouldPollNowPlaying(panelVisible: true, loggedIn: true, t0));
+        }
+
+        // การ refresh ทางอื่น (กดปุ่ม/เพลงจบ/alt-tab) ต้องเลื่อนรอบ poll ถัดไป ไม่ยิงซ้อนของที่เพิ่งทำ
+        [Fact]
+        public void VisiblePoll_WaitsFullIntervalAfterAnyFetch()
+        {
+            var c = new RefreshCoordinator();
+            DateTime t0 = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+
+            c.OnNowPlayingFetchStarted(t0);
+            Assert.False(c.ShouldPollNowPlaying(true, true, t0.AddSeconds(1)));
+            Assert.False(c.ShouldPollNowPlaying(true, true, t0.AddSeconds(5.9)));
+            Assert.True(c.ShouldPollNowPlaying(true, true, t0.AddSeconds(6.1)));
+
+            c.OnNowPlayingFetchStarted(t0.AddSeconds(6.1)); // poll รอบนั้นยิงไปแล้ว
+            Assert.False(c.ShouldPollNowPlaying(true, true, t0.AddSeconds(7)));
+        }
+
         // === trigger ตอนเพลงจบ ===
 
         private static SpotifyNowPlayingInfo At(string trackId, double positionSec, double durationSec = 180) =>
@@ -267,6 +296,22 @@ namespace ChillWithYou_SpotifyMod.Tests
             Assert.False(c.ShouldRefreshOnSongEnd());
 
             c.OnNowPlayingSynced(At("t2", 5)); // ผู้ใช้ย้อนไปฟังใหม่ = รอบใหม่
+            Assert.True(c.ShouldRefreshOnSongEnd());
+        }
+
+        // ลาก progress bar ถอยกลับมาจากปลายเพลงหลัง trigger ยิงไปแล้ว ต้องติดอาวุธใหม่
+        // ไม่งั้นพอเดินถึงปลายอีกรอบจะไม่มีใครไปดึงเพลงถัดไป
+        [Fact]
+        public void LocalSeek_RearmsSongEndOnlyWhenAwayFromEnd()
+        {
+            var c = new RefreshCoordinator();
+            c.OnNowPlayingSynced(At("t1", 10));
+            Assert.True(c.ShouldRefreshOnSongEnd());
+
+            c.OnLocalSeek(TimeSpan.FromSeconds(179), TimeSpan.FromSeconds(180)); // ยังอยู่ปลายเพลง
+            Assert.False(c.ShouldRefreshOnSongEnd());
+
+            c.OnLocalSeek(TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(180)); // ลากถอยกลับมา
             Assert.True(c.ShouldRefreshOnSongEnd());
         }
 

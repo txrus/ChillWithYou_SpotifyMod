@@ -68,6 +68,9 @@ namespace ChillWithYou_SpotifyMod
 
         private static bool _subscribedToTick;
         private static bool _subscribedToFocus;
+        private static bool _pollInFlight;
+        private static string _lastLoggedNowPlaying; // กัน log ซ้ำทุกรอบ poll - เขียนเฉพาะตอนเพลงเปลี่ยน
+        private static bool _isScrubbing;            // ผู้เล่นกำลังลาก progress bar - slider เป็นของเขา ห้ามเขียนทับ
 
         // กฎ orchestration ของการ refresh (โหลด context เมื่อไหร่/ทางไหน, commit ตอนไหน,
         // วงจร retry หลังสั่งเล่น, cooldown ของ focus-resync) - แยกเป็น class ล้วน ทดสอบได้
@@ -210,6 +213,9 @@ namespace ChillWithYou_SpotifyMod
 
                 _posText = SpotifyUiKit.CreateInlineText(progressRow.transform, "0:00", 30f);
                 _progressSlider = SpotifyUiKit.CreateProgressSlider(progressRow.transform);
+                // ลาก/กดบนแถบเพื่อ seek - ส่งคำสั่งตอนปล่อยนิ้วครั้งเดียว ไม่ใช่ทุกเฟรมที่ลาก
+                SpotifyUiKit.AddPressCallbacks(_progressSlider.gameObject, OnSeekPressed, OnSeekReleased);
+                _isScrubbing = false;
                 _durText = SpotifyUiKit.CreateInlineText(progressRow.transform, "0:00", 30f);
 
                 // --- Controls row: prev / play-pause / next ---
@@ -379,6 +385,10 @@ namespace ChillWithYou_SpotifyMod
                 // ต้อง reset ตัวจำ context เพื่อบังคับให้รอบ poll ถัดไปโหลด context มาเติมใหม่
                 _refresh.Reset();
 
+                // subscribe ตั้งแต่ inject ไม่ใช่ตอนมีเพลงเล่น เพราะ handler นี้ถือ poll ตามเวลาด้วย -
+                // เคสเปิดเมนูค้างไว้ตอนยังไม่มีเพลง แล้วไปเปิดเพลงจากมือถือ ต้องเห็นเองโดยไม่ต้องกดอะไร
+                EnsureSubscribedToTick();
+
                 // ติดอาวุธ resync ตอน alt-tab กลับเข้าเกมตั้งแต่ inject เลย (handler กันเองว่ายังไม่ login ก็เฉยๆ)
                 // เดิม subscribe ใน ApplyNowPlaying หลัง null check -> เคสใช้งานครั้งแรก (connect ตอนยังไม่มี
                 // เพลงเล่น) ไม่เคยถึงบรรทัดนั้น พอไปเปิดเพลงใน Spotify แล้วสลับกลับมา เกมเลยไม่ resync ให้
@@ -535,11 +545,21 @@ namespace ChillWithYou_SpotifyMod
         // คืนข้อมูลเพลงที่เพิ่งดึงมา ให้ RefreshAfterPlay ใช้เช็คว่า Spotify สลับเพลงให้แล้วหรือยัง
         public static async Task<SpotifyNowPlayingInfo> RefreshNowPlaying()
         {
-            Plugin.Log.LogInfo("[SpotifyPatches] RefreshNowPlaying: calling GetCurrentlyPlaying...");
+            // จดเวลาไว้ตั้งแต่ก่อนยิง - การ refresh ทางอื่น (กดปุ่ม/เพลงจบ/alt-tab) จึงเลื่อนรอบ
+            // poll ถัดไปออกไปเอง ไม่ยิงซ้อนกับสิ่งที่เพิ่งทำไป
+            _refresh.OnNowPlayingFetchStarted(DateTime.UtcNow);
+
             SpotifyNowPlayingInfo info = await SpotifyApi.GetCurrentlyPlaying();
-            Plugin.Log.LogInfo(info == null
-                ? "[SpotifyPatches] RefreshNowPlaying: GetCurrentlyPlaying returned null"
-                : $"[SpotifyPatches] RefreshNowPlaying: got '{info.Title}' by '{info.Artist}'");
+
+            // poll ทุก 6 วิ ทำให้ log ท่วมถ้าเขียนทุกครั้ง - เขียนเฉพาะตอนผลเปลี่ยนจากที่เห็นล่าสุด
+            string seen = info == null ? null : $"{info.Title} - {info.Artist}";
+            if (seen != _lastLoggedNowPlaying)
+            {
+                _lastLoggedNowPlaying = seen;
+                Plugin.Log.LogInfo(seen == null
+                    ? "[SpotifyPatches] RefreshNowPlaying: ไม่มีอะไรเล่นอยู่"
+                    : $"[SpotifyPatches] RefreshNowPlaying: got '{info.Title}' by '{info.Artist}'");
+            }
 
             // ทุกอย่างที่แตะ Unity API (Text, Image, Texture2D) ต้องรันบน main thread เท่านั้น
             Plugin.RunOnMainThread(() => ApplyNowPlaying(info));
@@ -618,14 +638,37 @@ namespace ChillWithYou_SpotifyMod
         {
             if (_subscribedToTick) return;
             _subscribedToTick = true;
-            Canvas.willRenderCanvases += TickProgressBar;
+            Canvas.willRenderCanvases += OnWillRenderCanvases;
         }
 
-        // มอดไม่ได้ poll ตามเวลา (ถอดออกไปตอนลดจำนวน API call) รู้ว่าเพลงเปลี่ยนได้แค่ 2 ทาง:
-        // ผู้ใช้กดปุ่มในเกม หรือนาฬิกาเราเองนับจนเพลงจบ ทั้งคู่พลาดกรณีที่ไปสั่งจากแอป Spotify
-        // โดยตรง - เกมจะยังนับ progress ของเพลงเก่าต่อไปจนกว่าจะกดอะไรสักอย่าง
+        private static void OnWillRenderCanvases()
+        {
+            PollNowPlayingIfDue();
+            TickProgressBar();
+        }
+
+        // สั่งเพลงจากที่อื่น (มือถือ/แอปบนเครื่อง) แล้วแผงในเกมต้องตามให้ทัน - ทางเดิมมีแค่กดปุ่มในเกม
+        // นาฬิกาเรานับจนเพลงจบ และ alt-tab กลับเข้าเกม ซึ่งพลาดกรณีที่ผู้เล่นอยู่ในเกมทั้งหมดแล้ว
+        // หยิบมือถือมากดข้ามเพลง (ไม่มี event ไหนเกิดเลย แผงเลยค้างอยู่กับเพลงเก่า)
+        // poll ตามเวลาเฉพาะตอนแผงเปิดอยู่จริง - ปิดเมนูแล้วไม่มีอะไรให้อัปเดต หยุดยิงทันที
+        private static void PollNowPlayingIfDue()
+        {
+            if (_pollInFlight || _spotifySection == null || !_spotifySection.activeInHierarchy) return;
+            if (!_refresh.ShouldPollNowPlaying(panelVisible: true, SpotifyAuth.IsLoggedIn, DateTime.UtcNow)) return;
+
+            _pollInFlight = true;
+            SafeFireAndForget(PollNowPlaying());
+        }
+
+        // กันยิงซ้อนเมื่อ request ก่อนหน้าช้ากว่าคาบ poll (เน็ตหน่วง/Spotify ตอบช้า)
+        private static async Task PollNowPlaying()
+        {
+            try { await RefreshNowPlaying(); }
+            finally { _pollInFlight = false; }
+        }
+
         // สลับหน้าต่างกลับเข้าเกมเป็นจังหวะที่บอกได้ค่อนข้างชัดว่าผู้ใช้เพิ่งไปยุ่งกับที่อื่นมา
-        // เลย resync ตรงนี้แทนการกลับไป poll ทุกไม่กี่วินาที ซึ่งเปลืองกว่ามาก
+        // -> resync ทันทีโดยไม่ต้องรอครบคาบ poll (มี cooldown กัน alt-tab รัวๆ)
         private static void EnsureSubscribedToFocus()
         {
             if (_subscribedToFocus) return;
@@ -643,11 +686,17 @@ namespace ChillWithYou_SpotifyMod
 
         // รันทุกเฟรม คำนวณตำแหน่งเพลงเองจากเวลาจริงที่ผ่านไป ไม่ยิง API เพิ่มเลย
         // ค่าจริงจาก Spotify จะมา sync ทับจุด anchor นี้ใหม่ทุกครั้งใน ApplyNowPlaying
-        // (ไม่มี poll ตามเวลาแล้ว - resync เกิดตอนกดปุ่ม เพลงจบ หรือสลับหน้าต่างกลับเข้าเกม)
         private static void TickProgressBar()
         {
             if (!_session.IsActive || _posText == null || _durText == null || _progressSlider == null)
                 return;
+
+            // ระหว่างลาก slider เป็นของผู้เล่น - แสดงเวลาตามตำแหน่งที่ลากถึง แล้วอย่าไปเขียนทับค่า
+            if (_isScrubbing)
+            {
+                _posText.text = PanelViewModel.FormatTime(ScrubTarget());
+                return;
+            }
 
             PlaybackFrame frame = _session.Tick(DateTime.UtcNow);
 
@@ -661,6 +710,42 @@ namespace ChillWithYou_SpotifyMod
             // (frame ยัง clamp ค้างที่ปลายเพลงทุกเฟรมจนกว่าข้อมูลเพลงใหม่จะ Sync ทับ - แสดงบาร์เต็มไว้)
             if (frame.ReachedEnd && _refresh.ShouldRefreshOnSongEnd())
                 SafeFireAndForget(RefreshAfterPlay(_vm.Current.HighlightedTrackId, _refresh.LastSeenContextUri));
+        }
+
+        // === seek: ลาก/กดบน progress bar ===
+
+        // ตำแหน่งเพลงที่ตรงกับค่า slider ตอนนี้ (ระหว่างลาก slider ถือค่าที่ผู้เล่นเลือกอยู่)
+        private static TimeSpan ScrubTarget()
+        {
+            TimeSpan duration = _session.Tick(DateTime.UtcNow).Duration;
+            return TimeSpan.FromSeconds(duration.TotalSeconds * _progressSlider.value);
+        }
+
+        private static void OnSeekPressed()
+        {
+            if (_session.IsActive) _isScrubbing = true;
+        }
+
+        // ปล่อยนิ้วแล้วค่อยส่งคำสั่งครั้งเดียว (ลากผ่านทั้งแถบไม่ได้แปลว่าต้องยิง API ทุกเฟรม)
+        private static void OnSeekReleased()
+        {
+            if (!_isScrubbing) return;
+            _isScrubbing = false;
+
+            if (!_session.IsActive || _progressSlider == null) return;
+
+            TimeSpan duration = _session.Tick(DateTime.UtcNow).Duration;
+            if (duration <= TimeSpan.Zero) return;
+
+            TimeSpan target = ScrubTarget();
+
+            // ขยับนาฬิกาในเครื่องทันที ไม่ต้องรอ Spotify ตอบ - บาร์จึงไม่เด้งกลับไปจุดเดิมชั่วครู่
+            // (ถ้าคำสั่งพลาด รอบ poll ถัดไปจะแก้ค่าให้เองภายใน 6 วิ)
+            _session.Sync(target, duration, _session.IsPlaying, DateTime.UtcNow);
+            _refresh.OnLocalSeek(target, duration);
+
+            Plugin.Log.LogInfo($"[SpotifyPatches] seek ไปที่ {PanelViewModel.FormatTime(target)}");
+            SafeFireAndForget(SpotifyApi.Seek((int)target.TotalMilliseconds));
         }
 
         private static async void SafeFireAndForget(Task task)
@@ -799,7 +884,11 @@ namespace ChillWithYou_SpotifyMod
                 if (_posText != null) _posText.text = "0:00";
                 if (_durText != null) _durText.text = "0:00";
                 if (_progressSlider != null) _progressSlider.value = 0f;
+                _isScrubbing = false; // ไม่มีเพลงให้ลากแล้ว (เช่นเพลงหยุดไประหว่างที่มือยังจิ้มอยู่)
             }
+
+            // ลาก seek ได้เฉพาะตอนมีเพลงอยู่จริง
+            if (_progressSlider != null) _progressSlider.interactable = !s.ShowIdleProgress;
 
             ApplyNowPlayingCover(s.NowPlayingCoverBytes);
             ApplyHeader(s);

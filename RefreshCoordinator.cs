@@ -153,9 +153,37 @@ namespace ChillWithYou_SpotifyMod
                 _songEndFired = false;
         }
 
+        // ผู้เล่นลาก progress bar ในเกมเอง - ตำแหน่งเปลี่ยนโดยไม่มีข้อมูลรอบใหม่จาก Spotify
+        // ลากถอยกลับมาจากปลายเพลงหลัง trigger ยิงไปแล้ว ต้องติดอาวุธใหม่ ไม่งั้นพอเดินถึงปลาย
+        // อีกรอบจะไม่มีใครไปดึงเพลงถัดไปให้
+        public void OnLocalSeek(TimeSpan position, TimeSpan duration)
+        {
+            if (duration - position > SongEndRearmMargin)
+                _songEndFired = false;
+        }
+
         // Spotify รับคำสั่งไปแล้วจริงไหม: เห็นเพลงหรือ context เปลี่ยนไปจากตอนก่อนสั่ง = จบ
         public static bool IsPlaySettled(SpotifyNowPlayingInfo info, string trackIdBefore, string contextUriBefore) =>
             info != null && (info.TrackId != trackIdBefore || info.ContextUri != contextUriBefore);
+
+        // === poll ระหว่างที่แผงเปิดค้างอยู่ ===
+
+        // เวลาที่เริ่มดึงข้อมูลเพลงครั้งล่าสุด ไม่ว่าจะมาจากทางไหน (กดปุ่ม/เพลงจบ/alt-tab/poll)
+        // -> การ refresh ทางอื่นเลื่อน poll รอบถัดไปออกไปเอง ไม่ยิงซ้อนกัน
+        private DateTime _lastNowPlayingFetchUtc = DateTime.MinValue;
+
+        // ถี่พอให้การสั่งจากมือถือ/แอปบนเครื่องขึ้นในเกมภายในไม่กี่วินาที แต่ยังเป็นแค่ ~10 ครั้ง/นาที
+        // และเกิดเฉพาะตอนแผงเปิดอยู่จริง (ปิดเมนูแล้วไม่มีอะไรให้อัปเดต - หยุดยิงทันที)
+        private static readonly TimeSpan VisiblePollInterval = TimeSpan.FromSeconds(6);
+
+        public void OnNowPlayingFetchStarted(DateTime nowUtc) => _lastNowPlayingFetchUtc = nowUtc;
+
+        // ถึงรอบ poll หรือยัง - เงื่อนไขคือแผงเปิดอยู่ + login แล้ว + ห่างจากการดึงครั้งล่าสุดพอ
+        public bool ShouldPollNowPlaying(bool panelVisible, bool loggedIn, DateTime nowUtc)
+        {
+            if (!panelVisible || !loggedIn) return false;
+            return nowUtc - _lastNowPlayingFetchUtc >= VisiblePollInterval;
+        }
 
         // === focus-resync policy ===
 
