@@ -46,6 +46,12 @@ namespace ChillWithYou_SpotifyMod
             return SpotifyGateway.SendAsync(HttpMethod.Put, path, jsonBody: "{}");
         }
 
+        // ข้ามไปตำแหน่งที่ต้องการของเพลงที่เล่นอยู่ (ผู้เล่นลาก progress bar ในเกม)
+        // query มี position_ms อยู่แล้ว device_id จึงต่อท้ายด้วย & ไม่ใช่ ?
+        public static Task<bool> Seek(int positionMs) =>
+            SpotifyGateway.SendAsync(HttpMethod.Put,
+                $"me/player/seek?position_ms={Math.Max(0, positionMs)}" + DeviceQuery("&"));
+
         public static Task Next() => SpotifyGateway.SendAsync(HttpMethod.Post, "me/player/next" + DeviceQuery("?"));
 
         public static Task Previous() => SpotifyGateway.SendAsync(HttpMethod.Post, "me/player/previous" + DeviceQuery("?"));

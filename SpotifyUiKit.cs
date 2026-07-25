@@ -4,6 +4,7 @@
 // ผู้เรียกผูก onClick/listener เองทั้งหมด - ทุกเมธอดในนี้แค่สร้าง GameObject แล้วคืน component
 using System;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 namespace ChillWithYou_SpotifyMod
@@ -283,10 +284,16 @@ namespace ChillWithYou_SpotifyMod
             go.AddComponent<RectTransform>();
             LayoutElement le = go.AddComponent<LayoutElement>();
             le.flexibleWidth = 1f;
-            le.preferredHeight = 8f;
+            // สูงกว่าแถบจริง (6px) เพื่อให้กด/ลากโดนง่าย - แถบยังวางกึ่งกลางแนวตั้งเท่าเดิม
+            le.preferredHeight = 16f;
+
+            // พื้นโปร่งใสเต็มพื้นที่ ไว้รับ pointer ทั้งแถบ (ไม่งั้นกดโดนเฉพาะช่วงที่ fill ยาวถึง)
+            Image hitArea = go.AddComponent<Image>();
+            hitArea.color = new Color(0f, 0f, 0f, 0f);
 
             Slider slider = go.AddComponent<Slider>();
-            slider.interactable = false; // แค่แสดงผล ไม่ให้ user ลากเปลี่ยนตำแหน่งเพลง (Spotify API ตัวนี้ยังไม่รองรับ seek)
+            // ผู้เรียกเป็นคนเปิด/ปิดตามสถานะ (ไม่มีเพลงอยู่ก็ไม่ควรลากได้) และเป็นคนสั่ง seek เอง
+            slider.interactable = false;
             slider.transition = Selectable.Transition.None;
 
             // แถบจริงสูง 6px หัวท้ายมน วางกึ่งกลางแนวตั้งของพื้นที่ slider
@@ -321,6 +328,22 @@ namespace ChillWithYou_SpotifyMod
             slider.minValue = 0f; slider.maxValue = 1f; slider.value = 0f;
 
             return slider;
+        }
+
+        // ผูก callback ตอนกด/ปล่อย pointer บน widget ใดๆ - ใช้กับ slider เพื่อรู้ว่าผู้เล่นเริ่ม/หยุดลาก
+        // (EventTrigger อยู่ร่วม GameObject กับ Slider ได้ uGUI ส่ง event ให้ทุก component ที่รับ
+        //  interface นั้น ตัว Slider จึงยังทำงานปกติ)
+        public static void AddPressCallbacks(GameObject go, Action onDown, Action onUp)
+        {
+            EventTrigger trigger = go.AddComponent<EventTrigger>();
+
+            var down = new EventTrigger.Entry { eventID = EventTriggerType.PointerDown };
+            down.callback.AddListener(_ => onDown?.Invoke());
+            trigger.triggers.Add(down);
+
+            var up = new EventTrigger.Entry { eventID = EventTriggerType.PointerUp };
+            up.callback.AddListener(_ => onUp?.Invoke());
+            trigger.triggers.Add(up);
         }
 
         // ช่องค้นหาทรง pill พื้นขาวจางแบบ input ของเกม - listener (Enter/ล้างคำค้น) เป็นเรื่องของผู้เรียก
