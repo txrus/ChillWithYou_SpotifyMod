@@ -1,0 +1,190 @@
+[size=5][b]Spotify inside Chill with You: Lo-Fi Story[/b][/size]
+
+Play, pause and skip, see what's playing with its cover art, search for songs, artists, albums and playlists, browse an artist's albums, open your own playlists, and drag the progress bar to seek — all from the pause menu, without alt-tabbing out.
+
+[line]
+
+[size=4][b]New in v1.3[/b][/size]
+
+[list]
+[*]Change the song on your phone, or in the Spotify app on the same PC, and the panel catches up within a few seconds. It only checks while the panel is open — close the menu and it stops entirely.
+[*]Drag or click the progress bar to jump to a spot in the song.
+[/list]
+
+[b]Earlier, in v1.2:[/b]
+
+[list]
+[*]Cover art on every row in search results and My Playlists.
+[*]Click an artist to expand their albums, with year and track count.
+[*]A play button at the end of artist and album rows starts the whole thing without browsing into it first.
+[*]Rows highlight the moment you click them, instead of sitting silent until Spotify answers.
+[*]Two bugs that made the mod call Spotify far more often than it should.
+[/list]
+
+Nothing about installing or building has changed since v1.1.1. If you already have an older version, rebuild from this download the same way you did before — your Client ID goes back into [b]SpotifyAuth.cs[/b].
+
+[line]
+
+[size=4][b]Before you start[/b][/size]
+
+You need:
+
+[list]
+[*][b]Spotify Premium.[/b] Spotify only allows playback control (play / pause / skip) on Premium accounts. Free accounts can log in but cannot control anything.
+[*][b]Windows.[/b] Your login is saved encrypted with Windows DPAPI.
+[*][b]BepInEx 5.x (x64).[/b]
+[*][b].NET SDK 8.0 or newer.[/b]
+[/list]
+
+[b]Please note: this download is SOURCE CODE, not a ready-made DLL.[/b]
+
+You build it yourself, because the mod needs [b]your own[/b] Spotify Client ID compiled into it — I cannot ship mine. It takes about 5 minutes and you do not need to know any C#. The six steps below are the whole process.
+
+[line]
+
+[size=4][b]1. Install BepInEx and .NET[/b][/size]
+
+[list=1]
+[*]Download BepInEx 5.x (x64) from [url=https://github.com/BepInEx/BepInEx/releases]the BepInEx releases page[/url].
+[*]Extract it into your game folder, next to [b]Chill With You.exe[/b].
+[*]Launch the game once, then close it. BepInEx creates its folders on that first run, including [b]BepInEx\plugins[/b].
+[*]Install the [url=https://dotnet.microsoft.com/download].NET SDK 8.0 or newer[/url].
+[/list]
+
+[line]
+
+[size=4][b]2. Create your Spotify app[/b][/size]
+
+Free, about two minutes. The mod talks to Spotify through their official Web API, which requires an app registration. Yours is private.
+
+[list=1]
+[*]Go to the [url=https://developer.spotify.com/dashboard]Spotify developer dashboard[/url] and log in.
+[*]Click [b]Create app[/b]. Name and description can be anything.
+[*]In [b]Redirect URIs[/b], enter this exactly, including the trailing slash:
+[code]http://127.0.0.1:8901/callback/[/code]
+[*]Under [b]Which API/SDKs are you planning to use?[/b], tick [b]Web API[/b].
+[*]Save, then open the app's Settings page and copy the [b]Client ID[/b] — a 32-character string of letters and numbers.
+[/list]
+
+You only need the Client ID. You do [b]not[/b] need the Client Secret: this mod uses PKCE, which is designed for apps that cannot keep a secret.
+
+[line]
+
+[size=4][b]3. Put your Client ID in the code[/b][/size]
+
+[list=1]
+[*]Extract this download to any folder.
+[*]Open [b]SpotifyAuth.cs[/b] in any text editor (Notepad is fine).
+[*]Near the top, find this line:
+[code]private const string ClientId = "ENTER_YOUR_CLIENT_ID";[/code]
+[*]Replace ENTER_YOUR_CLIENT_ID with your Client ID, keeping the quotes:
+[code]private const string ClientId = "a1b2c3d4e5f6...";[/code]
+[*]Save the file.
+[/list]
+
+[line]
+
+[size=4][b]4. Point the project at your game folder[/b][/size]
+
+The mod builds against DLLs inside your game folder, so it needs the path. The default points at my drive, so unless your game sits in exactly the same place:
+
+[list=1]
+[*]In the same folder as [b]ChillWithYou_SpotifyMod.csproj[/b], create a file named [b]GameDir.props[/b]
+[*]Put this inside, with your game folder path:
+[code]<Project>
+  <PropertyGroup>
+    <GameDir>C:\Program Files (x86)\Steam\steamapps\common\Chill with You Lo-Fi Story</GameDir>
+  </PropertyGroup>
+</Project>[/code]
+[/list]
+
+To find the folder in Steam: right-click the game > Manage > Browse local files.
+
+Watch out for Notepad saving it as [b]GameDir.props.txt[/b] — in the Save dialog, set [b]Save as type[/b] to [b]All Files[/b].
+
+[line]
+
+[size=4][b]5. Build[/b][/size]
+
+[list=1]
+[*]Open the folder containing [b]ChillWithYou_SpotifyMod.csproj[/b].
+[*]Shift + right-click an empty area, choose [b]Open PowerShell window here[/b] (or [b]Open in Terminal[/b]).
+[*]Run:
+[code]dotnet build -c Release[/code]
+[*]Wait for [b]Build succeeded[/b].
+[/list]
+
+If your game folder was found, the files are copied into [b]BepInEx\plugins[/b] for you and you're done.
+
+If not, copy them yourself from [b]bin\Release\netstandard2.1\[/b] — and copy [b]both[/b] of these, not just the first one:
+
+[code]ChillWithYou_SpotifyMod.dll
+System.Security.Cryptography.ProtectedData.dll[/code]
+
+The second one encrypts your saved login. Without it, Spotify login fails right after you approve in the browser.
+
+[line]
+
+[size=4][b]6. Play[/b][/size]
+
+[list=1]
+[*]Start Spotify on the same PC and play anything, so Spotify has an active device to control.
+[*]Launch the game. The Spotify panel is in the pause / settings menu.
+[*]Click [b]Connect Spotify[/b]. Your browser opens Spotify's permission page — approve it, then go back to the game.
+[/list]
+
+You only log in once. The session is remembered and resumes next time.
+
+[line]
+
+[size=4][b]If something goes wrong[/b][/size]
+
+[b]Browser opens but login never completes[/b]
+
+Two usual causes. First, the Redirect URI in your Spotify app must be exactly [code]http://127.0.0.1:8901/callback/[/code] — http (not https), and the trailing slash matters. Second, [b]System.Security.Cryptography.ProtectedData.dll[/b] must sit in [b]BepInEx\plugins[/b] next to [b]ChillWithYou_SpotifyMod.dll[/b]. If you copied the mod DLL by hand, copy that one too.
+
+You can confirm the second one: the player log will mention "Could not load file or assembly ... ProtectedData". It's at:
+[code]%USERPROFILE%\AppData\LocalLow\nestopi\Chill With You\Player.log[/code]
+
+[b]Build fails, complaining about Assembly-CSharp or UnityEngine[/b]
+
+GameDir is wrong. Check that the path in [b]GameDir.props[/b] points at the folder containing [b]Chill With You.exe[/b], and that you launched the game once after installing BepInEx.
+
+[b]"dotnet is not recognised"[/b]
+
+The .NET SDK isn't installed, or your terminal was already open when you installed it. Install it, then open a [b]new[/b] terminal window.
+
+[b]Buttons do nothing, playback won't change[/b]
+
+Playback control needs Spotify Premium, and Spotify needs an active device. Make sure Spotify is open and playing on the same PC.
+
+[b]Nothing appears in game[/b]
+
+Check [b]BepInEx\LogOutput.log[/b] for lines tagged [code][Spotify Player Mod][/code] and feel free to post that log in the Bugs tab.
+
+[line]
+
+[size=4][b]What Spotify won't let the mod do[/b][/size]
+
+Spotify removed a number of Web API endpoints for apps like this one, so a few things are simply not possible:
+
+[list]
+[*][b]An artist's top tracks.[/b] Their album list does work — that's what expands when you click an artist — but "most popular songs" doesn't.
+[*][b]Picking a specific track while playing from an artist.[/b] The queue is display-only there; use the next button.
+[*][b]Reading the track list of most playlists[/b], including Daily Mix, Discover Weekly and "This Is ..." — so clicking a playlist plays it rather than opening it. Once it starts, the real queue shows up.
+[*][b]Long result lists.[/b] Search returns at most 10 per category, and an artist's albums come back 10 at a time (the mod pages through up to 50 for you).
+[/list]
+
+Full details and links to Spotify's announcements are in the README.
+
+[line]
+
+[size=4][b]Source, issues, credits[/b][/size]
+
+Source, issue tracker and version history: [url=https://github.com/txrus/ChillWithYou_SpotifyMod]github.com/txrus/ChillWithYou_SpotifyMod[/url]
+
+The repository also has [b]build.ps1[/b], which inserts your Client ID and builds in one command. It isn't in this download only because archives containing scripts get held up by the file scanner — grab it from GitHub if you'd rather use it.
+
+I made this mod to learn, so if something's broken feel free to fork it, or tell me and I'll try to fix it.
+
+Not affiliated with the developers of Chill with You: Lo-Fi Story, or with Spotify. Licensed MIT.
