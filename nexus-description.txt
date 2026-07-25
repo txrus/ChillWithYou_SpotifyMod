@@ -1,9 +1,32 @@
 =====================================================================
-WHAT'S NEW IN v1.2
+WHAT'S NEW IN v1.3
+=====================================================================
+
+Two things this time: the panel keeps up with whatever else is driving
+Spotify, and you can scrub the progress bar from inside the game.
+
+- Skip, pause or seek from your phone (or the Spotify app on the same
+  PC) and the in-game panel follows within a few seconds. Before this it
+  only found out when you pressed something in game, when a song ran
+  out, or when you alt-tabbed back in — so if you never left the game,
+  the panel sat there showing the old song with the bar still running.
+  It only checks while the panel is open. Close the menu and it stops
+  entirely.
+
+- Drag or click the progress bar to jump to a spot in the song. The
+  command goes out once when you let go, and the bar moves right away
+  instead of snapping back for a moment first. The clickable strip is
+  taller than the bar you see, so it is easy to hit.
+
+Nothing changed in how you install or build the mod.
+
+
+=====================================================================
+EARLIER — v1.2
 =====================================================================
 
 The list was plain text before, so finding the thing you wanted meant
-reading every row. This release gives it artwork and makes it answer
+reading every row. That release gave it artwork and made it answer
 back when you click.
 
 - Cover art on every row in search results and My Playlists. Artist rows
@@ -27,7 +50,7 @@ Two bugs that made the mod call Spotify far more than it should:
 - Clicking several rows in a row started a fresh polling cycle for each
   click, all running at once.
 
-Both are fixed. Nothing changed in how you install or build the mod.
+Both are fixed.
 
 Existing users: rebuild from this source the same way you did before
 (your Client ID has to go back into SpotifyAuth.cs — that part hasn't

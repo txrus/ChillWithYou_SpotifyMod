@@ -153,7 +153,9 @@ This mod was made to learn, and almost everything about it was learned from othe
 
 See the per-version history in [CHANGELOG.md](CHANGELOG.md).
 
-Latest version **v1.2.0** — search results and My Lists now show real cover art, clicking an artist expands their album list, and a play button on each artist/album row starts the whole thing without digging in. Rows you tap highlight immediately instead of sitting silent until Spotify answers. Also fixes two loops that hammered the Web API — one fired every frame while a song was ending, the other stacked a fresh poll cycle per row you tapped — plus the track list and refresh fixes previously staged as 1.1.2.
+Latest version **v1.3.0** — the panel now keeps up with whatever else is driving Spotify: skip, pause or seek from your phone and the game follows within a few seconds, but only while the panel is actually open. You can also drag the progress bar to seek from inside the game.
+
+v1.2.0 brought cover art to search results and My Lists, artist album browsing, play buttons on artist/album rows, and instant highlighting on the row you tap — plus fixes for two loops that hammered the Web API.
 
 ## License
 
