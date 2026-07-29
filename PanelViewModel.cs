@@ -24,6 +24,7 @@ namespace ChillWithYou_SpotifyMod
         PlayTrackInContext, // เล่นเพลงนี้โดยคง context (next/prev เดินต่อ)
         LoadAlbum,          // โหลด track list ของอัลบั้มมาแสดง (ยังไม่เล่น)
         ToggleArtistAlbums, // กาง/หุบรายการอัลบั้มของศิลปินใต้แถวนั้น
+        TransferPlayback,   // ย้ายการเล่นไปอุปกรณ์ตัวนั้น (ไม่ได้เปลี่ยนเพลง/คิว)
     }
 
     // ทรงของรูปเล็กหน้าแถว - None = แถวนี้ไม่มีช่องรูปเลย (แถวคิวเพลงที่ทุกแถวใช้ปกเดียวกัน)
@@ -40,6 +41,7 @@ namespace ChillWithYou_SpotifyMod
         public string AlbumName;
         public string AlbumCoverUrl;
         public string ArtistId;
+        public string DeviceId;
 
         public static readonly RowAction None = new RowAction { Kind = RowActionKind.None };
 
@@ -56,6 +58,8 @@ namespace ChillWithYou_SpotifyMod
             new RowAction { Kind = RowActionKind.LoadAlbum, AlbumId = albumId, AlbumName = albumName, AlbumCoverUrl = coverUrl };
         public static RowAction ToggleArtistAlbums(string artistId) =>
             new RowAction { Kind = RowActionKind.ToggleArtistAlbums, ArtistId = artistId };
+        public static RowAction TransferPlayback(string deviceId) =>
+            new RowAction { Kind = RowActionKind.TransferPlayback, DeviceId = deviceId };
     }
 
     // แถวหนึ่งใน list (คิวเพลง / ผลค้นหา / My Lists) - เป็น data ล้วน renderer วาดตามนี้
@@ -95,7 +99,7 @@ namespace ChillWithYou_SpotifyMod
     }
 
     // พื้นที่ผลลัพธ์ใต้แถบ search ตอนนี้โชว์อะไรอยู่
-    public enum ResultsMode { Empty, SearchResults, MyPlaylists }
+    public enum ResultsMode { Empty, SearchResults, MyPlaylists, Devices }
 
     // Snapshot ทั้งหมดที่ UI ต้องรู้ - Apply(state) อ่านจากนี่ที่เดียว
     public class PanelState
@@ -156,6 +160,9 @@ namespace ChillWithYou_SpotifyMod
         // รายชื่อ playlist ของ user ชุดล่าสุด - เหตุผลเดียวกับ _lastSearchResults (กาง/หุบต้องประกอบใหม่)
         private List<UserPlaylistInfo> _lastMyPlaylists;
 
+        // รายการอุปกรณ์ชุดล่าสุดที่ดึงมา - เหตุผลเดียวกับสองตัวบน
+        private List<SpotifyDeviceInfo> _lastDevices;
+
         // ศิลปินที่กางรายการอัลบั้มอยู่ (null = ไม่มีใครกาง) พร้อมของที่จะแสดงใต้แถวนั้น
         private string _expandedArtistId;
         private List<ArtistAlbumInfo> _expandedAlbums;
@@ -181,6 +188,7 @@ namespace ChillWithYou_SpotifyMod
             };
             _lastSearchResults = null;
             _lastMyPlaylists = null;
+            _lastDevices = null;
             CollapseArtist();
             return Current;
         }
@@ -343,6 +351,7 @@ namespace ChillWithYou_SpotifyMod
         {
             _lastSearchResults = results;
             _lastMyPlaylists = null;
+            _lastDevices = null;
             CollapseArtist(); // ผลชุดใหม่แล้ว - อัลบั้มที่กางค้างจากคำค้นก่อนไม่เกี่ยวกันแล้ว
             Current.SelectedRowKey = null;
             Current.ResultsSections = new List<PanelSection>();
@@ -539,6 +548,46 @@ namespace ChillWithYou_SpotifyMod
                 });
         }
 
+        // รายการอุปกรณ์: เครื่องที่กำลังเล่นอยู่บอกสถานะไว้เฉยๆ กดไม่ได้ (ย้ายไปตัวเองไม่มีความหมาย)
+        // เครื่องที่ Spotify ห้ามควบคุมผ่าน Web API ก็กดไม่ได้เหมือนกัน - บอกเหตุผลไว้ที่บรรทัดรอง
+        // ดีกว่าปล่อยให้กดแล้วเงียบ
+        private void BuildDeviceSection()
+        {
+            var section = NewSection("Devices");
+            if (_lastDevices == null || _lastDevices.Count == 0)
+            {
+                section.Message = _lastDevices == null
+                    ? "Failed to load devices, try again"
+                    : "No devices found - open Spotify on this PC or your phone first";
+                return;
+            }
+
+            foreach (SpotifyDeviceInfo d in _lastDevices)
+            {
+                bool clickable = !d.IsActive && !d.IsRestricted && !string.IsNullOrEmpty(d.Id);
+                string type = string.IsNullOrEmpty(d.Type) ? "Device" : d.Type;
+
+                section.Rows.Add(new PanelRow
+                {
+                    Title = d.Name ?? "-",
+                    Sub = d.IsActive ? $"{type} · Playing here"
+                        : d.IsRestricted ? $"{type} · Can't be controlled from here"
+                        : type,
+                    // ระดับเสียงเป็นข้อมูลช่วยแยกเครื่องที่ชื่อคล้ายกัน (เครื่องบางตัวไม่รายงานมา)
+                    Right = d.VolumePercent != null ? $"{d.VolumePercent}%" : null,
+                    // จางเฉพาะเครื่องที่สั่งไม่ได้ - เครื่องที่เล่นอยู่กดไม่ได้เหมือนกันแต่เป็นแถวสำคัญที่สุด
+                    // ในลิสต์ ไม่ควรจางกว่าคนอื่น
+                    Muted = d.IsRestricted,
+                    Key = DeviceKey(d.Id),
+                    Action = clickable ? RowAction.TransferPlayback(d.Id) : RowAction.None,
+                });
+
+                // ทาเขียวเครื่องที่เล่นอยู่ ผ่านช่องทางเดียวกับ "แถวที่เพิ่งกด" - เห็นปุ๊บรู้ทันทีว่า
+                // เสียงออกที่ไหน และหลังย้ายเครื่องสำเร็จ สีก็ย้ายตามเองตอนดึงรายการใหม่
+                if (d.IsActive) Current.SelectedRowKey = DeviceKey(d.Id);
+            }
+        }
+
         private void CollapseArtist()
         {
             _expandedArtistId = null;
@@ -555,6 +604,7 @@ namespace ChillWithYou_SpotifyMod
 
             if (Current.ResultsMode == ResultsMode.SearchResults) BuildSearchSections();
             else if (Current.ResultsMode == ResultsMode.MyPlaylists) BuildMyPlaylistSection();
+            else if (Current.ResultsMode == ResultsMode.Devices) BuildDeviceSection();
         }
 
         // กดปุ่ม My Lists: ถ้ากำลังโชว์อยู่ -> หุบ (ผู้เรียกไม่ต้อง fetch)
@@ -563,6 +613,7 @@ namespace ChillWithYou_SpotifyMod
         {
             // ไม่ว่าจะกางหรือหุบ พื้นที่ผลลัพธ์ก็ไม่ใช่ของผลค้นหาแล้ว - ทิ้งสถานะกางอัลบั้มไปด้วย
             _lastSearchResults = null;
+            _lastDevices = null;
             CollapseArtist();
             Current.SelectedRowKey = null;
 
@@ -590,6 +641,40 @@ namespace ChillWithYou_SpotifyMod
             return Current;
         }
 
+        // กดปุ่ม Devices: toggle เหมือน My Lists (กางอยู่ -> หุบ / ยังไม่กาง -> คืน true ให้ผู้เรียกไป fetch)
+        // ไม่มี cache เลยแม้แต่ชั้นเดียว - รายการอุปกรณ์เปลี่ยนตลอด (เปิด/ปิดแอปบนมือถือ ลำโพงหลุด wifi)
+        // กดดูทีไรต้องเป็นของจริง ณ ตอนนั้น
+        public bool DevicesClicked()
+        {
+            _lastSearchResults = null;
+            _lastMyPlaylists = null;
+            CollapseArtist();
+            Current.SelectedRowKey = null;
+
+            if (Current.ResultsMode == ResultsMode.Devices)
+            {
+                _lastDevices = null;
+                Current.ResultsMode = ResultsMode.Empty;
+                Current.ResultsSections = new List<PanelSection>();
+                Current.ResultsRevision++;
+                Current.NeedsReflow = true;
+                return false;
+            }
+
+            Current.NeedsReflow = false;
+            return true;
+        }
+
+        // รายการอุปกรณ์มาถึง (null = โหลดพลาด) - นับเป็นโหมด Devices ทั้งสองทาง เพื่อให้กดปุ่มซ้ำ
+        // หุบข้อความ error ได้เหมือนรายการปกติ (เหตุผลเดียวกับ MyPlaylistsArrived)
+        public PanelState DevicesArrived(List<SpotifyDeviceInfo> devices)
+        {
+            _lastDevices = devices;
+            Current.ResultsMode = ResultsMode.Devices;
+            RebuildResults();
+            return Current;
+        }
+
         // คำค้นถูกลบจนว่าง -> หุบพื้นที่ผลลัพธ์กลับ (รวมถึงกรณีที่โชว์ My Lists อยู่ - toggle ต้องกลับ
         // สถานะ "หุบ" ด้วย ไม่งั้นกดปุ่ม My Lists ครั้งถัดไปจะกลายเป็นสั่งหุบทั้งที่จอว่างอยู่แล้ว)
         public PanelState SearchCleared()
@@ -602,6 +687,7 @@ namespace ChillWithYou_SpotifyMod
 
             _lastSearchResults = null;
             _lastMyPlaylists = null;
+            _lastDevices = null;
             CollapseArtist();
             Current.SelectedRowKey = null;
             Current.ResultsMode = ResultsMode.Empty;
@@ -618,6 +704,7 @@ namespace ChillWithYou_SpotifyMod
         private static string AlbumKey(string id) => id != null ? "album:" + id : null;
         private static string ArtistKey(string id) => id != null ? "artist:" + id : null;
         private static string PlaylistKey(string id) => id != null ? "playlist:" + id : null;
+        private static string DeviceKey(string id) => id != null ? "device:" + id : null;
 
         private PanelSection NewSection(string label)
         {
