@@ -520,6 +520,18 @@ namespace ChillWithYou_SpotifyMod
         private static async Task<bool> ExecuteContextFetch(ContextFetchPlan plan)
         {
             // 21 = เพลงปัจจุบัน + คิวอีก 20 ซึ่งเป็นเพดานสูงสุดที่ /me/player/queue ให้มา (ไม่มี pagination ต่อ)
+            if (plan.Kind == ContextFetchKind.QueueWindow)
+            {
+                // เพลงเดินเลยแถวสุดท้ายบนจอไปแล้ว - เอาคิวช่วงถัดไปมาแทนเฉพาะแถว header คงเดิม
+                System.Collections.Generic.List<PlaylistTrackInfo> nextTracks =
+                    await SpotifyWebApi.GetQueueTracksAsync(maxTracks: 21);
+                if (nextTracks == null || nextTracks.Count == 0) return false;
+
+                _refresh.OnQueueShown(nextTracks);
+                Plugin.RunOnMainThread(() => Apply(_vm.QueueWindowLoaded(nextTracks, plan.ContextUri)));
+                return true;
+            }
+
             if (plan.Kind == ContextFetchKind.Queue)
             {
                 // ดึงคิวไม่ได้ -> ปล่อยของเดิมค้างไว้ (ไม่ป้อน VM) แล้วคืน false เพื่อให้ retry
@@ -527,11 +539,13 @@ namespace ChillWithYou_SpotifyMod
                     plan.ContextUri, plan.DisplayName, plan.CoverBytes, maxTracks: 21);
                 if (queueInfo == null) return false;
 
+                _refresh.OnQueueShown(queueInfo.Tracks);
                 Plugin.RunOnMainThread(() => Apply(_vm.ContextLoaded(queueInfo)));
                 return true;
             }
 
             PlaylistInfo playlist = await SpotifyWebApi.GetCurrentPlaylistAsync(plan.PlaylistId, maxTracks: 21);
+            _refresh.OnQueueShown(playlist?.Tracks);
             Plugin.RunOnMainThread(() => Apply(_vm.ContextLoaded(playlist)));
             return playlist != null && playlist.Id == plan.PlaylistId && playlist.Tracks != null;
         }
@@ -856,6 +870,9 @@ namespace ChillWithYou_SpotifyMod
             PlaylistInfo albumInfo = await SpotifyWebApi.GetAlbumTracksAsync(albumId, albumName, coverUrl);
             if (albumInfo == null) return; // โหลดพลาด - ปล่อยของเดิมค้างไว้ดีกว่าล้างจอเป็นว่าง
 
+            // พื้นที่คิวถูกยืมไปโชว์อัลบั้มที่กดดู ไม่ใช่คิวของ context ที่เล่นอยู่แล้ว -> บอก coordinator
+            // ไม่งั้นพอเพลงที่เล่นอยู่ไม่ตรงกับแถวพวกนี้ มันจะสั่งเลื่อนคิวมาทับของที่ผู้ใช้กำลังดู
+            _refresh.OnQueueShown(null);
             Plugin.RunOnMainThread(() => Apply(_vm.ContextLoaded(albumInfo)));
         }
 

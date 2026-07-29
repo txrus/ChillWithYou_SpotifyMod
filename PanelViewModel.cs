@@ -290,9 +290,38 @@ namespace ChillWithYou_SpotifyMod
                 return Current;
             }
 
-            for (int i = 0; i < playlist.Tracks.Count; i++)
+            AddQueueRows(playlist.Tracks, playlist.ContextUri);
+            return Current;
+        }
+
+        // คิวเลื่อนหน้าต่าง: ยังเล่นอยู่ใน context เดิม แต่เพลงที่เล่นอยู่เดินเลยแถวสุดท้ายบนจอไปแล้ว
+        // (playlist ยาวกว่าที่ดึงมาได้ - พอถึงเพลงที่ 22 ก็ไม่มีแถวไหนถูกไฮไลต์อีก) -> เปลี่ยนเฉพาะ
+        // แถวเพลง ส่วน header (ชื่อ/ปก/PLAYING FROM) คงเดิมไว้ เพราะ context ไม่ได้เปลี่ยนไปไหน
+        public PanelState QueueWindowLoaded(List<PlaylistTrackInfo> tracks, string contextUri)
+        {
+            if (tracks == null || tracks.Count == 0)
             {
-                PlaylistTrackInfo t = playlist.Tracks[i];
+                // ไม่ได้คิวชุดใหม่มา - ปล่อยแถวเดิมค้างไว้ ดีกว่าล้างจนว่างเปล่า
+                Current.NeedsReflow = false;
+                return Current;
+            }
+
+            Current.QueueRows = new List<PanelRow>();
+            Current.QueueMessage = null;
+            Current.QueueRevision++;
+            Current.NeedsReflow = true;
+            AddQueueRows(tracks, contextUri);
+            return Current;
+        }
+
+        // แถวคิวหนึ่งชุด - เลขลำดับเริ่มที่ 1 เสมอ (คิวที่มาจาก /me/player/queue ไม่รู้ตำแหน่งจริง
+        // ใน context อยู่แล้ว แถวแรกคือเพลงที่กำลังเล่น)
+        private void AddQueueRows(List<PlaylistTrackInfo> tracks, string contextUri)
+        {
+            bool isArtist = SpotifyContext.IsArtist(contextUri);
+            for (int i = 0; i < tracks.Count; i++)
+            {
+                PlaylistTrackInfo t = tracks[i];
                 // artist context: Spotify ไม่รับ offset -> แถวกดไม่ได้ แสดงคิวอย่างเดียว
                 bool clickable = !isArtist && !string.IsNullOrEmpty(t.Id);
                 Current.QueueRows.Add(new PanelRow
@@ -303,11 +332,10 @@ namespace ChillWithYou_SpotifyMod
                     Right = FormatTime(TimeSpan.FromMilliseconds(t.DurationMs)),
                     TrackId = t.Id,
                     Action = clickable
-                        ? RowAction.PlayTrackInContext(playlist.ContextUri, t.Id)
+                        ? RowAction.PlayTrackInContext(contextUri, t.Id)
                         : RowAction.None,
                 });
             }
-            return Current;
         }
 
         // ผลค้นหามาถึง - แทนที่พื้นที่ผลลัพธ์ทั้งหมด (รวมถึงปิดโหมด My Lists ที่อาจเปิดอยู่)

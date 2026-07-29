@@ -313,8 +313,11 @@ namespace ChillWithYou_SpotifyMod
         // ดึงเพลงปัจจุบัน + คิวถัดไปจาก /me/player/queue (ใช้ scope user-read-playback-state ที่มีอยู่แล้ว)
         // ใช้เป็น fallback เวลาอ่าน track list ของ playlist ตรงๆ ไม่ได้ (app ใหม่ใน development mode
         // โดน Spotify บล็อกทั้ง endpoint /tracks (403) และ field tracks ใน /playlists/{id} (โดนตัดเงียบๆ))
+        // และใช้เลื่อนหน้าต่างคิวเมื่อเพลงเดินเลยแถวสุดท้ายบนจอ - endpoint นี้เริ่มนับจากเพลงที่กำลังเล่น
+        // เสมอ เลยได้ "ช่วงถัดไป" ของ context เดิมมาโดยไม่ต้องรู้ว่าเพลงนั้นอยู่ลำดับที่เท่าไหร่
+        // ไม่ cache: ทุกครั้งที่เรียกคือจงใจอยากได้ snapshot ล่าสุด
         // คืน null = โหลดพลาด
-        private static async Task<List<PlaylistTrackInfo>> GetQueueTracksAsync(int maxTracks)
+        public static async Task<List<PlaylistTrackInfo>> GetQueueTracksAsync(int maxTracks)
         {
             JObject obj = await SpotifyGateway.GetJsonAsync("me/player/queue");
             if (obj == null) return null;

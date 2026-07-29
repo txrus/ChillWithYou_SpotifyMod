@@ -260,6 +260,75 @@ namespace ChillWithYou_SpotifyMod.Tests
             Assert.Null(s.QueueRows[0].TrackId);
         }
 
+        // === คิวเลื่อนหน้าต่าง (เพลงเดินเลยแถวสุดท้ายบนจอ) ===
+
+        private static List<PlaylistTrackInfo> Window(params string[] ids)
+        {
+            var list = new List<PlaylistTrackInfo>();
+            foreach (string id in ids)
+                list.Add(new PlaylistTrackInfo { Id = id, Title = "Track " + id, Artist = "A", DurationMs = 200000 });
+            return list;
+        }
+
+        // หัวใจของฟีเจอร์: แถวเปลี่ยนเป็นคิวช่วงใหม่ แต่ header ต้องไม่ขยับ - ยังเล่น playlist เดิมอยู่
+        [Fact]
+        public void QueueWindowLoaded_ReplacesRowsButKeepsHeader()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            vm.ContextLoaded(Playlist(tracks: 2));
+            int rev = vm.Current.QueueRevision;
+
+            PanelState s = vm.QueueWindowLoaded(Window("t22", "t23"), "spotify:playlist:p1");
+
+            Assert.Equal("My Mix", s.HeaderName);
+            Assert.Equal("PLAYING FROM PLAYLIST", s.HeaderSubLabel);
+            Assert.True(s.HeaderCoverVisible);
+            Assert.Equal(2, s.QueueRows.Count);
+            Assert.Equal("t22", s.QueueRows[0].TrackId);
+            Assert.Equal("1", s.QueueRows[0].Index); // เพลงที่เล่นอยู่ขึ้นแถวแรกเสมอ
+            Assert.NotEqual(rev, s.QueueRevision);
+            Assert.True(s.NeedsReflow);
+        }
+
+        // แถวชุดใหม่ต้องกดเล่นได้เหมือนเดิม โดยยังผูกกับ context เดิม (next/prev เดินต่อได้)
+        [Fact]
+        public void QueueWindowLoaded_RowsStayClickableInSameContext()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            PanelState s = vm.QueueWindowLoaded(Window("t22"), "spotify:playlist:p1");
+
+            Assert.Equal(RowActionKind.PlayTrackInContext, s.QueueRows[0].Action.Kind);
+            Assert.Equal("spotify:playlist:p1", s.QueueRows[0].Action.ContextUri);
+        }
+
+        [Fact]
+        public void QueueWindowLoaded_ArtistContext_RowsUnclickable()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            PanelState s = vm.QueueWindowLoaded(Window("t22"), "spotify:artist:a1");
+
+            Assert.Equal(RowActionKind.None, s.QueueRows[0].Action.Kind);
+        }
+
+        // ดึงคิวชุดใหม่ไม่ได้ -> คงแถวเดิมไว้ ดีกว่าล้างจนว่าง (และไม่ต้อง rebuild ฟรี)
+        [Fact]
+        public void QueueWindowLoaded_NoTracks_KeepsExistingRows()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            vm.ContextLoaded(Playlist(tracks: 2));
+            int rev = vm.Current.QueueRevision;
+
+            PanelState s = vm.QueueWindowLoaded(null, "spotify:playlist:p1");
+
+            Assert.Equal(2, s.QueueRows.Count);
+            Assert.Equal(rev, s.QueueRevision);
+            Assert.False(s.NeedsReflow);
+        }
+
         // === ผลค้นหา ===
 
         private static SpotifySearchResults SomeResults() => new SpotifySearchResults
