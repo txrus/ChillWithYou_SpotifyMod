@@ -164,6 +164,109 @@ namespace ChillWithYou_SpotifyMod.Tests
             Assert.Equal(ContextFetchKind.Playlist, c.PlanContextFetch(PlaylistTrack(), loggedIn: true).Kind);
         }
 
+        // === เลื่อนหน้าต่างคิวเมื่อเพลงเดินเลยแถวสุดท้ายบนจอ ===
+
+        private static System.Collections.Generic.List<PlaylistTrackInfo> Shown(params string[] ids)
+        {
+            var list = new System.Collections.Generic.List<PlaylistTrackInfo>();
+            foreach (string id in ids) list.Add(new PlaylistTrackInfo { Id = id, Title = "Track " + id });
+            return list;
+        }
+
+        private static SpotifyNowPlayingInfo TrackInPlaylist(string trackId, string uri = "spotify:playlist:p1")
+        {
+            SpotifyNowPlayingInfo info = PlaylistTrack(uri);
+            info.TrackId = trackId;
+            return info;
+        }
+
+        // playlist ยาวกว่าที่ดึงมาได้: พอเล่นถึงเพลงที่ 22 เพลงที่เล่นอยู่หายไปจากลิสต์เฉยๆ
+        // -> ต้องขอคิวช่วงถัดไปมาแทน ทั้งที่ context ยังเป็น playlist เดิม
+        [Fact]
+        public void QueueSlide_TrackFellOffTheList_RefetchesWindow()
+        {
+            var c = new RefreshCoordinator();
+            c.PlanContextFetch(TrackInPlaylist("t1"), loggedIn: true);
+            c.OnQueueShown(Shown("t1", "t2"));
+            c.OnContextFetchCompleted("spotify:playlist:p1", loaded: true);
+
+            // ยังอยู่ในลิสต์ - ไม่ต้องยิงอะไรเพิ่ม
+            Assert.Equal(ContextFetchKind.None, c.PlanContextFetch(TrackInPlaylist("t2"), loggedIn: true).Kind);
+
+            ContextFetchPlan plan = c.PlanContextFetch(TrackInPlaylist("t22"), loggedIn: true);
+            Assert.Equal(ContextFetchKind.QueueWindow, plan.Kind);
+            Assert.Equal("spotify:playlist:p1", plan.ContextUri);
+        }
+
+        // คิวชุดใหม่มีเพลงที่เล่นอยู่แล้ว -> รอบ poll ถัดไปต้องเงียบ
+        [Fact]
+        public void QueueSlide_AfterNewWindowArrives_StopsAsking()
+        {
+            var c = new RefreshCoordinator();
+            c.OnContextFetchCompleted("spotify:playlist:p1", loaded: true);
+            c.OnQueueShown(Shown("t1", "t2"));
+
+            Assert.Equal(ContextFetchKind.QueueWindow, c.PlanContextFetch(TrackInPlaylist("t22"), loggedIn: true).Kind);
+            c.OnQueueShown(Shown("t22", "t23"));
+
+            Assert.Equal(ContextFetchKind.None, c.PlanContextFetch(TrackInPlaylist("t22"), loggedIn: true).Kind);
+            Assert.Equal(ContextFetchKind.None, c.PlanContextFetch(TrackInPlaylist("t23"), loggedIn: true).Kind);
+        }
+
+        // ดึงคิวไม่สำเร็จ (คิวชุดเดิมค้างอยู่) ต้องไม่วนขอใหม่ทุกรอบ poll ทุก 6 วิ - เพลงละครั้งพอ
+        [Fact]
+        public void QueueSlide_AsksOncePerTrack()
+        {
+            var c = new RefreshCoordinator();
+            c.OnContextFetchCompleted("spotify:playlist:p1", loaded: true);
+            c.OnQueueShown(Shown("t1", "t2"));
+
+            Assert.Equal(ContextFetchKind.QueueWindow, c.PlanContextFetch(TrackInPlaylist("t22"), loggedIn: true).Kind);
+            Assert.Equal(ContextFetchKind.None, c.PlanContextFetch(TrackInPlaylist("t22"), loggedIn: true).Kind);
+
+            // เพลงถัดไปก็ยังไม่อยู่ในลิสต์ - ปลดล็อกแล้วลองใหม่ได้
+            Assert.Equal(ContextFetchKind.QueueWindow, c.PlanContextFetch(TrackInPlaylist("t23"), loggedIn: true).Kind);
+        }
+
+        // ผู้ใช้กดอัลบั้มจากผลค้นหามาดูรายชื่อเพลงในพื้นที่คิว - ห้ามเลื่อนคิวมาทับของที่เขากำลังดู
+        [Fact]
+        public void QueueSlide_QueueAreaShowingSomethingElse_NeverSlides()
+        {
+            var c = new RefreshCoordinator();
+            c.OnContextFetchCompleted("spotify:playlist:p1", loaded: true);
+            c.OnQueueShown(Shown("t1", "t2"));
+            c.OnQueueShown(null); // กดอัลบั้มมาดู
+
+            Assert.Equal(ContextFetchKind.None, c.PlanContextFetch(TrackInPlaylist("t22"), loggedIn: true).Kind);
+        }
+
+        // ยังไม่รู้ว่าจอโชว์อะไร / ไม่มีเพลงเล่นอยู่ - ไม่ใช่เรื่องของกฎนี้
+        [Fact]
+        public void QueueSlide_NothingShownOrPlaying_NoFetch()
+        {
+            var c = new RefreshCoordinator();
+            c.OnContextFetchCompleted("spotify:playlist:p1", loaded: true);
+
+            Assert.Equal(ContextFetchKind.None, c.PlanContextFetch(TrackInPlaylist("t22"), loggedIn: true).Kind);
+
+            c.OnQueueShown(Shown("t1"));
+            Assert.Equal(ContextFetchKind.None, c.PlanContextFetch(TrackInPlaylist(null), loggedIn: true).Kind);
+        }
+
+        // กด ↻ = โหลด context ใหม่ทั้งชุดอยู่แล้ว ความจำเรื่องหน้าต่างคิวเก่าต้องถูกล้างไปด้วย
+        [Fact]
+        public void QueueSlide_InvalidateContext_ForgetsShownQueue()
+        {
+            var c = new RefreshCoordinator();
+            c.OnContextFetchCompleted("spotify:playlist:p1", loaded: true);
+            c.OnQueueShown(Shown("t1"));
+
+            c.InvalidateContext();
+
+            // uri ไม่ตรงกับที่จำไว้แล้ว -> โหลด context เต็มชุด ไม่ใช่แค่เลื่อนคิว
+            Assert.Equal(ContextFetchKind.Playlist, c.PlanContextFetch(TrackInPlaylist("t22"), loggedIn: true).Kind);
+        }
+
         // === วงจรวนเช็คหลังสั่งเล่น ===
 
         [Fact]

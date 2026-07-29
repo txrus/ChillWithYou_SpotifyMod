@@ -4,6 +4,7 @@
 //
 // injector เป็นคนยิง API จริง แต่ "จะยิงไหม/ยิงตัวไหน/จำผลยังไง" ถามที่นี่:
 // - PlanContextFetch: หลัง poll now-playing ควรโหลด context ต่อไหม และผ่านทางไหน
+//   (รวมถึงกฎเลื่อนหน้าต่างคิวเมื่อเพลงที่เล่นอยู่เดินเลยแถวสุดท้ายบนจอไปแล้ว)
 // - OnContextFetchCompleted: กฎ commit-เฉพาะ-ตอนสำเร็จ - โหลดพลาดต้องไม่จำ เพื่อให้
 //   รอบ poll หน้า retry เอง (จำผิดจังหวะเดียว = หน้าคิวว่างค้างถาวรแบบเงียบๆ)
 // - NextRetryDelayMs / IsPlaySettled: วงจรวนเช็คหลังสั่งเล่น จน Spotify สลับเพลงให้จริง
@@ -13,6 +14,7 @@
 // เหมือนที่ field เดิมใน injector โดนมาก่อน - state ในนี้เป็น field เดี่ยวอ่าน/เขียนตรงๆ
 // ตามโมเดลเดิม ไม่ได้เพิ่มข้อกำหนดใหม่
 using System;
+using System.Collections.Generic;
 
 namespace ChillWithYou_SpotifyMod
 {
@@ -22,6 +24,10 @@ namespace ChillWithYou_SpotifyMod
         None,     // ไม่ต้องโหลด (ยังไม่ login / context เดิมที่จำไว้อยู่แล้ว)
         Playlist, // โหลดผ่าน /playlists/{id} (PlaylistId เป็น null ได้ = ไม่ได้เล่นจาก context -> เคลียร์คิว)
         Queue,    // context ที่ไม่ใช่ playlist (artist/album) - อ่านตรงๆ ไม่ได้แล้ว ใช้ /me/player/queue แทน
+
+        // context เดิม แต่เพลงที่เล่นอยู่หลุดออกไปจากแถวที่โชว์อยู่แล้ว -> ขอคิวชุดใหม่มาแทนเฉพาะแถว
+        // (header ยังเป็นของเดิม เพราะยังเล่นอยู่ใน playlist/album/artist เดียวกัน)
+        QueueWindow,
     }
 
     public struct ContextFetchPlan
@@ -56,6 +62,7 @@ namespace ChillWithYou_SpotifyMod
         public void Reset()
         {
             _lastSeenContextUri = null;
+            ForgetShownQueue();
         }
 
         // ผู้ใช้กด ↻ - ลืม context ที่จำไว้เพื่อบังคับโหลดคิว snapshot ล่าสุดใหม่ทั้งชุด
@@ -63,6 +70,7 @@ namespace ChillWithYou_SpotifyMod
         public void InvalidateContext()
         {
             _lastSeenContextUri = null;
+            ForgetShownQueue();
         }
 
         // === context-refresh policy ===
@@ -72,8 +80,12 @@ namespace ChillWithYou_SpotifyMod
         public ContextFetchPlan PlanContextFetch(SpotifyNowPlayingInfo info, bool loggedIn)
         {
             string contextUri = info?.ContextUri;
-            if (!loggedIn || contextUri == _lastSeenContextUri)
-                return new ContextFetchPlan { Kind = ContextFetchKind.None };
+            if (!loggedIn)
+                return NoFetch;
+
+            // context เดิม - ไม่ต้องโหลด header ใหม่ แต่คิวบนจออาจตามเพลงไม่ทันแล้ว
+            if (contextUri == _lastSeenContextUri)
+                return PlanQueueSlide(info);
 
             string playlistId = info?.PlaylistContextId;
             if (!string.IsNullOrEmpty(contextUri) && string.IsNullOrEmpty(playlistId))
@@ -92,6 +104,61 @@ namespace ChillWithYou_SpotifyMod
 
             // playlist จริง (id ไม่ null) หรือไม่ได้เล่นจาก context เลย (ทั้งคู่ null = เคลียร์คิว)
             return new ContextFetchPlan { Kind = ContextFetchKind.Playlist, PlaylistId = playlistId };
+        }
+
+        private static ContextFetchPlan NoFetch => new ContextFetchPlan { Kind = ContextFetchKind.None };
+
+        // === หน้าต่างคิวบนจอ ===
+
+        // track id ของทุกแถวที่โชว์อยู่ในคิวตอนนี้ - null = ของที่โชว์อยู่ไม่ใช่คิวของ context ที่เล่นอยู่
+        // (ผู้ใช้กดอัลบั้มจากผลค้นหามาดูรายชื่อเพลง) จึงห้ามไปเลื่อนทับของที่เขากำลังดู
+        private HashSet<string> _shownTrackIds;
+
+        // เพลงที่สั่งเลื่อนหน้าต่างไปแล้วหนึ่งรอบ - กันยิงซ้ำทุกรอบ poll ถ้าคิวชุดใหม่ยังไม่มีเพลงนี้
+        private string _slidForTrackId;
+
+        // คิวบนจอเพิ่งถูกแทนที่ด้วยเพลงชุดนี้ (null = ไม่ใช่คิวของ context ที่เล่นอยู่)
+        // ไม่ล้าง _slidForTrackId ที่นี่: ถ้าคิวชุดใหม่ยังไม่มีเพลงที่เล่นอยู่ การล้างจะทำให้รอบ poll
+        // ถัดไปสั่งเลื่อนอีกวนไม่จบ - ปล่อยให้ปลดล็อกเองตอนเปลี่ยนเพลง (หรือผู้ใช้กด ↻)
+        public void OnQueueShown(List<PlaylistTrackInfo> tracks)
+        {
+            if (tracks == null)
+            {
+                _shownTrackIds = null;
+                return;
+            }
+
+            var ids = new HashSet<string>();
+            foreach (PlaylistTrackInfo t in tracks)
+                if (!string.IsNullOrEmpty(t.Id)) ids.Add(t.Id);
+            _shownTrackIds = ids;
+        }
+
+        private void ForgetShownQueue()
+        {
+            _shownTrackIds = null;
+            _slidForTrackId = null;
+        }
+
+        // เล่นอยู่ใน context เดิม แต่เพลงที่เล่นอยู่ไม่มีในแถวที่โชว์แล้ว - เกิดเมื่อ Spotify เดินเลย
+        // เพลงสุดท้ายที่เราดึงมาได้ (playlist ยาวกว่า 21 เพลง พอถึงเพลงที่ 22 คิวบนจอก็ไม่มีเพลงไหน
+        // ถูกไฮไลต์อีกเลย) หรือผู้ใช้ข้ามไปเพลงอื่นใน playlist เดิมจากแอปอื่น
+        // -> ขอคิวจาก /me/player/queue ซึ่งเริ่มนับจากเพลงที่เล่นอยู่เสมอ มาแทนแถวเดิม
+        private ContextFetchPlan PlanQueueSlide(SpotifyNowPlayingInfo info)
+        {
+            string trackId = info?.TrackId;
+            if (string.IsNullOrEmpty(trackId) || string.IsNullOrEmpty(info.ContextUri))
+                return NoFetch;
+
+            // ยังไม่รู้ว่าจอโชว์อะไรอยู่ / จอโชว์ของอย่างอื่นอยู่ (อัลบั้มที่กดดู) - ไม่ใช่เรื่องของกฎนี้
+            if (_shownTrackIds == null || _shownTrackIds.Count == 0) return NoFetch;
+            if (_shownTrackIds.Contains(trackId)) return NoFetch;
+
+            // เลื่อนให้เพลงละครั้งเดียว: ถ้าคิวชุดใหม่ยังไม่มีเพลงนี้ (หรือโหลดพลาด) ต้องไม่วนยิงทุกรอบ poll
+            if (trackId == _slidForTrackId) return NoFetch;
+            _slidForTrackId = trackId;
+
+            return new ContextFetchPlan { Kind = ContextFetchKind.QueueWindow, ContextUri = info.ContextUri };
         }
 
         // ผลของการโหลดตามแผน: commit เฉพาะตอนสำเร็จ (หรือไม่มี context ให้โหลด)
