@@ -23,7 +23,8 @@ that can never succeed for this app.
 Liked Songs remains viewable when played from the Spotify app itself: the panel recognizes
 the `spotify:user:*:collection` context and falls back to the queue window (the same
 mechanism already used for artist and album radio, which also can't be read directly), showing
-a "LIKED SONGS" header with non-clickable rows.
+a "LIKED SONGS" header. (Row clickability for this specific context changed later — see the
+addendum below; this paragraph describes the state at the time of the original decision.)
 
 ## Consequences
 
@@ -57,7 +58,9 @@ never actually tested, because there was previously no way to reach this context
 Once the play button existed, a player confirmed in game that rows genuinely couldn't be
 selected - expected, since the row's click action was `None` and no offset request was ever
 sent. Rows were then made clickable (`SpotifyContext.RowsViewOnly` no longer includes
-`IsCollection`) specifically to find out whether Spotify's Play endpoint accepts an `offset`
-for this context - genuinely unknown until the next round of in-game testing confirms it
-either way. If Spotify does reject it, the failure is silent and harmless (the command just
-doesn't move playback, the same as any other rejected play command in this mod).
+`IsCollection`) to find out whether Spotify's Play endpoint accepts an `offset` for this
+context.
+
+**Confirmed in game: it does.** Clicking a track in the Liked Songs queue jumps playback to
+that track, same as a playlist row. `IsCollection` and `IsArtist` are no longer the same case
+for row clickability - only `IsArtist` remains a confirmed rejection.
