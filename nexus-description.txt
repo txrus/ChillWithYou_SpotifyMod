@@ -6,12 +6,28 @@ your own playlists, and drag the progress bar to seek - all from the
 pause menu, without alt-tabbing out.
 
 
-=== NEW IN v1.3 =====================================================
+=== NEW IN v1.4 =====================================================
+
+* Shuffle and repeat buttons next to the transport controls. Hover
+  either one to see its name - the icons alone are too small to read.
+
+* A volume slider sits next to the buttons too.
+
+* A Devices button shows every device Spotify sees and lets you switch
+  playback to one of them - no more "nothing happens" when Spotify has
+  no active device.
+
+* Hover the progress bar to preview the time you're about to seek to,
+  before you click.
+
+* Long playlists no longer lose track of what's playing once you're
+  past the first 21 songs.
+
+Earlier, in v1.3:
 
 * Change the song on your phone, or in the Spotify app on the same PC,
   and the panel catches up within a few seconds. It only checks while
   the panel is open - close the menu and it stops entirely.
-
 * Drag or click the progress bar to jump to a spot in the song.
 
 Earlier, in v1.2:
@@ -220,6 +236,11 @@ so a few things are simply not possible:
 * Long result lists. Search returns at most 10 per category, and an
   artist's albums come back 10 at a time (the mod pages through up to
   50 for you).
+
+* Saving/liking a song, or browsing your Liked Songs directly. The
+  endpoint for it returns an error in this app's mode, confirmed and
+  not fixable in code. Liked Songs still shows up in the queue if you
+  start it from the Spotify app itself.
 
 Full details and links to Spotify's announcements are in the README.
 

@@ -4,6 +4,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/) and uses [Semanti
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-07-30
+
+Rolls up four merged PRs that had been sitting unreleased (queue-window-slide fix, device
+transfer, progress-bar hover time, and this round's shuffle/repeat/volume) - bumped to a
+minor version for the same reason 1.2.0 and 1.3.0 were: real new player-facing controls,
+not just bug fixes.
+
 ### Added
 - **Shuffle and repeat buttons** in the controls row, arranged the same way the Spotify app
   does (shuffle - prev - play - next - repeat), so the play button stays centered since one

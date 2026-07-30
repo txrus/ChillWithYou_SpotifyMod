@@ -4,7 +4,17 @@ Play, pause and skip, see what's playing with its cover art, search for songs, a
 
 [line]
 
-[size=4][b]New in v1.3[/b][/size]
+[size=4][b]New in v1.4[/b][/size]
+
+[list]
+[*]Shuffle and repeat buttons next to the transport controls. Hover either one to see its name — the icons alone are too small to read.
+[*]A volume slider sits next to the buttons too.
+[*]A Devices button shows every device Spotify sees and lets you switch playback to one of them — no more "nothing happens" when Spotify has no active device.
+[*]Hover the progress bar to preview the time you're about to seek to, before you click.
+[*]Long playlists no longer lose track of what's playing once you're past the first 21 songs.
+[/list]
+
+[b]Earlier, in v1.3:[/b]
 
 [list]
 [*]Change the song on your phone, or in the Spotify app on the same PC, and the panel catches up within a few seconds. It only checks while the panel is open — close the menu and it stops entirely.
@@ -173,6 +183,7 @@ Spotify removed a number of Web API endpoints for apps like this one, so a few t
 [*][b]Picking a specific track while playing from an artist.[/b] The queue is display-only there; use the next button.
 [*][b]Reading the track list of most playlists[/b], including Daily Mix, Discover Weekly and "This Is ..." — so clicking a playlist plays it rather than opening it. Once it starts, the real queue shows up.
 [*][b]Long result lists.[/b] Search returns at most 10 per category, and an artist's albums come back 10 at a time (the mod pages through up to 50 for you).
+[*][b]Saving/liking a song, or browsing your Liked Songs directly.[/b] The endpoint for it returns an error in this app's mode, confirmed and not fixable in code. Liked Songs still shows up in the queue if you start it from the Spotify app itself.
 [/list]
 
 Full details and links to Spotify's announcements are in the README.
