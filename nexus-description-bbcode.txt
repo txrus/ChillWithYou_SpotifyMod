@@ -1,6 +1,6 @@
 [size=5][b]Spotify inside Chill with You: Lo-Fi Story[/b][/size]
 
-Play, pause and skip, see what's playing with its cover art, search for songs, artists, albums and playlists, browse an artist's albums, open your own playlists, and drag the progress bar to seek — all from the pause menu, without alt-tabbing out.
+Play, pause and skip, shuffle and repeat, control the volume, and drag the progress bar to seek. See what's playing with its cover art, search for songs, artists, albums and playlists, browse an artist's albums, open your own playlists or your Liked Songs, and switch playback to another device — all from the pause menu, without alt-tabbing out.
 
 [line]
 
@@ -12,7 +12,7 @@ Play, pause and skip, see what's playing with its cover art, search for songs, a
 [*]A Devices button shows every device Spotify sees and lets you switch playback to one of them — no more "nothing happens" when Spotify has no active device.
 [*]Hover the progress bar to preview the time you're about to seek to, before you click.
 [*]Long playlists no longer lose track of what's playing once you're past the first 21 songs.
-[*]A "Liked Songs" row in My Lists plays your saved tracks from the top, same as any playlist.
+[*]A "Liked Songs" row in My Lists plays your saved tracks from the top, same as any playlist — and you can click a specific track in the queue to jump straight to it.
 [/list]
 
 [b]Earlier, in v1.3:[/b]

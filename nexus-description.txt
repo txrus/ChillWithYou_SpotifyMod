@@ -1,9 +1,10 @@
 A Spotify player inside Chill with You: Lo-Fi Story.
 
-Play, pause and skip, see what's playing with its cover art, search for
-songs, artists, albums and playlists, browse an artist's albums, open
-your own playlists, and drag the progress bar to seek - all from the
-pause menu, without alt-tabbing out.
+Play, pause and skip, shuffle and repeat, control the volume, and drag
+the progress bar to seek. See what's playing with its cover art, search
+for songs, artists, albums and playlists, browse an artist's albums,
+open your own playlists or your Liked Songs, and switch playback to
+another device - all from the pause menu, without alt-tabbing out.
 
 
 === NEW IN v1.4 =====================================================
@@ -24,7 +25,8 @@ pause menu, without alt-tabbing out.
   past the first 21 songs.
 
 * A "Liked Songs" row in My Lists plays your saved tracks from the top,
-  same as any playlist.
+  same as any playlist - and you can click a specific track in the
+  queue to jump straight to it.
 
 Earlier, in v1.3:
 
