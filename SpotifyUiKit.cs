@@ -335,7 +335,7 @@ namespace ChillWithYou_SpotifyMod
         //  interface นั้น ตัว Slider จึงยังทำงานปกติ)
         public static void AddPressCallbacks(GameObject go, Action onDown, Action onUp)
         {
-            EventTrigger trigger = go.AddComponent<EventTrigger>();
+            EventTrigger trigger = EnsureEventTrigger(go);
 
             var down = new EventTrigger.Entry { eventID = EventTriggerType.PointerDown };
             down.callback.AddListener(_ => onDown?.Invoke());
@@ -344,6 +344,65 @@ namespace ChillWithYou_SpotifyMod
             var up = new EventTrigger.Entry { eventID = EventTriggerType.PointerUp };
             up.callback.AddListener(_ => onUp?.Invoke());
             trigger.triggers.Add(up);
+        }
+
+        // ผูก callback ตอน pointer เข้า/ออกจาก widget - uGUI ไม่มี event "เมาส์ขยับ" ให้ใช้
+        // ผู้เรียกที่อยากรู้ตำแหน่งเมาส์ต้องอ่าน Input.mousePosition เองระหว่างที่ยัง enter อยู่
+        public static void AddHoverCallbacks(GameObject go, Action onEnter, Action onExit)
+        {
+            EventTrigger trigger = EnsureEventTrigger(go);
+
+            var enter = new EventTrigger.Entry { eventID = EventTriggerType.PointerEnter };
+            enter.callback.AddListener(_ => onEnter?.Invoke());
+            trigger.triggers.Add(enter);
+
+            var exit = new EventTrigger.Entry { eventID = EventTriggerType.PointerExit };
+            exit.callback.AddListener(_ => onExit?.Invoke());
+            trigger.triggers.Add(exit);
+        }
+
+        // widget เดียวอาจผูกทั้ง press และ hover - ต้องใช้ EventTrigger ตัวเดียวกัน ไม่ใช่คนละตัว
+        private static EventTrigger EnsureEventTrigger(GameObject go)
+        {
+            EventTrigger existing = go.GetComponent<EventTrigger>();
+            return existing != null ? existing : go.AddComponent<EventTrigger>();
+        }
+
+        // ความกว้างป้ายเวลาลอย - ผู้เรียกใช้คำนวณระยะกันป้ายล้นปลายแถบ
+        // กว้างพอสำหรับ "59:59" และเพลงยาวข้ามชั่วโมง ("1:02:03") ที่เจอได้ในพวก mix/DJ set
+        public const float HoverTimeLabelWidth = 54f;
+
+        // ป้ายเวลาลอยเหนือ progress bar ตอนผู้เล่นเอาเมาส์ไปชี้ - kit รู้แค่หน้าตา
+        // ผู้เรียกเป็นคนเปิด/ปิดและย้ายตำแหน่งตามเมาส์เอง
+        // anchor ยึดขอบซ้ายของ parent เพื่อให้ผู้เรียกสั่งตำแหน่งเป็น "กี่ px จากปลายซ้ายของแถบ" ได้ตรงๆ
+        public static RectTransform CreateHoverTimeLabel(Transform parent)
+        {
+            GameObject go = new GameObject("HoverTime");
+            go.transform.SetParent(parent, worldPositionStays: false);
+
+            RectTransform rt = go.AddComponent<RectTransform>();
+            rt.anchorMin = new Vector2(0f, 0.5f);
+            rt.anchorMax = new Vector2(0f, 0.5f);
+            rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.sizeDelta = new Vector2(HoverTimeLabelWidth, 17f);
+
+            Image bg = go.AddComponent<Image>();
+            bg.sprite = UiSprites.Pill;
+            bg.type = Image.Type.Sliced;
+            // ทึบกว่าพื้นแผงปกติ เพราะป้ายนี้ลอยทับปกอัลบั้ม/ชื่อเพลงซึ่งสว่างไม่เท่ากัน
+            bg.color = new Color(0.03f, 0.03f, 0.055f, 0.92f);
+            // ห้ามรับ pointer เด็ดขาด - ป้ายวิ่งตามเมาส์ ถ้ามันบังก็จะแย่ event ไปจากแถบที่กำลังลากอยู่
+            bg.raycastTarget = false;
+
+            Text text = CreateText(go.transform, "0:00", 10, TextAnchor.MiddleCenter);
+            RectTransform textRt = text.rectTransform;
+            textRt.anchorMin = Vector2.zero;
+            textRt.anchorMax = Vector2.one;
+            textRt.offsetMin = Vector2.zero;
+            textRt.offsetMax = Vector2.zero;
+
+            go.SetActive(false); // โผล่เฉพาะตอนชี้/ลากเท่านั้น
+            return rt;
         }
 
         // ช่องค้นหาทรง pill พื้นขาวจางแบบ input ของเกม - listener (Enter/ล้างคำค้น) เป็นเรื่องของผู้เรียก

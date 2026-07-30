@@ -29,6 +29,13 @@ namespace ChillWithYou_SpotifyMod
         private static Slider _progressSlider;
         private static Text _playPauseLabel;
 
+        // ป้ายเวลาลอยเหนือ progress bar ตอนเอาเมาส์ไปชี้ (บอกว่าถ้ากดตรงนี้จะไปวินาทีที่เท่าไหร่)
+        private static RectTransform _hoverTimeLabel;
+        private static Text _hoverTimeText;
+        private static bool _hoverOnProgress;  // เมาส์อยู่บนแถบไหม - uGUI มีแค่ enter/exit ไม่มี event ตอนขยับ
+        private static bool _hoverLabelShown;  // สถานะที่สั่ง SetActive ไปแล้ว - กันสั่งซ้ำทุกเฟรม
+        private static Canvas _panelCanvas;    // ใช้แปลงพิกัดจอ -> พิกัดในแถบ (resolve ครั้งเดียวแล้วจำไว้)
+
         private static GameObject _controlsRow;
         private static GameObject _connectRow;
         private static GameObject _queueList;
@@ -216,6 +223,17 @@ namespace ChillWithYou_SpotifyMod
                 // ลาก/กดบนแถบเพื่อ seek - ส่งคำสั่งตอนปล่อยนิ้วครั้งเดียว ไม่ใช่ทุกเฟรมที่ลาก
                 SpotifyUiKit.AddPressCallbacks(_progressSlider.gameObject, OnSeekPressed, OnSeekReleased);
                 _isScrubbing = false;
+
+                // ป้ายเวลาลอยเหนือแถบ: ชี้ตรงไหนก็รู้ว่ากดแล้วจะไปวินาทีที่เท่าไหร่ก่อนจะกดจริง
+                // เป็นลูกของตัว slider เอง (ไม่ใช่ของ progressRow) จะได้ใช้พิกัดในแถบตรงๆ และไม่ไป
+                // กินที่ใน HorizontalLayoutGroup ของแถวจนแถบสั้นลง
+                _hoverTimeLabel = SpotifyUiKit.CreateHoverTimeLabel(_progressSlider.transform);
+                _hoverTimeText = _hoverTimeLabel.GetComponentInChildren<Text>();
+                _hoverOnProgress = false;
+                _hoverLabelShown = false;
+                _panelCanvas = null; // UI ชุดใหม่ = canvas ตัวเดิมอาจถูก destroy ไปแล้ว ให้หาใหม่ตอนใช้ครั้งแรก
+                SpotifyUiKit.AddHoverCallbacks(_progressSlider.gameObject,
+                    () => _hoverOnProgress = true, () => _hoverOnProgress = false);
                 _durText = SpotifyUiKit.CreateInlineText(progressRow.transform, "0:00", 30f);
 
                 // --- Controls row: prev / play-pause / next ---
@@ -671,6 +689,7 @@ namespace ChillWithYou_SpotifyMod
         {
             PollNowPlayingIfDue();
             TickProgressBar();
+            UpdateHoverTime();
         }
 
         // สั่งเพลงจากที่อื่น (มือถือ/แอปบนเครื่อง) แล้วแผงในเกมต้องตามให้ทัน - ทางเดิมมีแค่กดปุ่มในเกม
@@ -736,6 +755,65 @@ namespace ChillWithYou_SpotifyMod
             // (frame ยัง clamp ค้างที่ปลายเพลงทุกเฟรมจนกว่าข้อมูลเพลงใหม่จะ Sync ทับ - แสดงบาร์เต็มไว้)
             if (frame.ReachedEnd && _refresh.ShouldRefreshOnSongEnd())
                 SafeFireAndForget(RefreshAfterPlay(_vm.Current.HighlightedTrackId, _refresh.LastSeenContextUri));
+        }
+
+        // ระยะที่ป้ายเวลาลอยอยู่เหนือกึ่งกลางแถบ - แถบสูง 16px ป้ายสูง 17px ระยะนี้ทำให้ป้ายพ้น
+        // ขอบบนของแถบพอดีโดยยังไม่ไปชนบรรทัดชื่อศิลปินที่อยู่เหนือขึ้นไป
+        private const float HoverLabelY = 17f;
+
+        // ป้ายเวลาเหนือแถบ: uGUI ไม่มี event "เมาส์ขยับ" เลยต้องอ่านตำแหน่งเมาส์เองทุกเฟรม
+        // แต่คำนวณเฉพาะตอนเมาส์อยู่บนแถบ/กำลังลากจริงๆ เท่านั้น เฟรมอื่นจบที่ if แรก
+        private static void UpdateHoverTime()
+        {
+            if (_hoverTimeLabel == null || _hoverTimeText == null || _progressSlider == null) return;
+
+            // ไม่มีเพลง = ไม่มีเวลาให้บอก (แถบก็ลากไม่ได้อยู่แล้วตอนนั้น)
+            bool show = _session.IsActive && (_hoverOnProgress || _isScrubbing);
+            if (show != _hoverLabelShown)
+            {
+                _hoverLabelShown = show;
+                _hoverTimeLabel.gameObject.SetActive(show);
+            }
+            if (!show) return;
+
+            RectTransform barRt = _progressSlider.GetComponent<RectTransform>();
+            float width = barRt.rect.width;
+            if (width <= 0f) return; // ยังไม่ผ่าน layout รอบแรก - เฟรมหน้าค่อยว่ากัน
+
+            float fraction;
+            if (_isScrubbing)
+            {
+                // กำลังลาก: ใช้ค่าเดียวกับที่จะสั่ง seek จริง ป้ายจะได้ไม่บอกคนละเวลากับปลายทาง
+                fraction = _progressSlider.value;
+            }
+            else
+            {
+                Vector2 local;
+                if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                        barRt, Input.mousePosition, HoverEventCamera(), out local))
+                    return;
+                // pivot ของแถบอยู่กึ่งกลาง -> ปลายซ้ายคือ -width/2
+                fraction = Mathf.Clamp01(local.x / width + 0.5f);
+            }
+
+            TimeSpan duration = _session.Tick(DateTime.UtcNow).Duration;
+            _hoverTimeText.text = PanelViewModel.FormatTime(TimeSpan.FromSeconds(duration.TotalSeconds * fraction));
+
+            // ป้ายอยู่กลางตำแหน่งเมาส์ แต่ห้ามล้นออกนอกปลายแถบทั้งสองข้าง (ชี้ที่ 0:00 หรือปลายเพลง
+            // แล้วป้ายโผล่ครึ่งเดียวนอกแผงจะอ่านไม่ออก)
+            float half = SpotifyUiKit.HoverTimeLabelWidth / 2f;
+            float x = Mathf.Clamp(fraction * width, half, Mathf.Max(half, width - half));
+            _hoverTimeLabel.anchoredPosition = new Vector2(x, HoverLabelY);
+        }
+
+        // Screen Space - Overlay ต้องส่ง camera = null ไม่งั้นพิกัดที่แปลงได้จะเพี้ยน
+        // โหมดอื่น (Camera/World) ใช้กล้องของ canvas - เกมนี้ใช้โหมดไหนไม่ได้ fix ไว้ เลยถามเอาตอนรัน
+        private static Camera HoverEventCamera()
+        {
+            if (_panelCanvas == null && _spotifySection != null)
+                _panelCanvas = _spotifySection.GetComponentInParent<Canvas>();
+            if (_panelCanvas == null) return null;
+            return _panelCanvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : _panelCanvas.worldCamera;
         }
 
         // === seek: ลาก/กดบน progress bar ===
