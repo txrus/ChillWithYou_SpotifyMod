@@ -22,6 +22,11 @@ namespace ChillWithYou_SpotifyMod.Tests
                 Duration = TimeSpan.FromMinutes(3),
             };
 
+        // หา section ตามชื่อ ไม่ใช่ตามลำดับ - พื้นที่ผลลัพธ์มีหลาย section และมีการเพิ่มใหม่ได้เรื่อยๆ
+        // (เช่น "Library" ที่มาแทรกอยู่เหนือ "My Playlists") เทสต์ไม่ควรพังเพราะแค่ลำดับขยับ
+        private static PanelSection Section(PanelState s, string label) =>
+            s.ResultsSections.Single(x => x.Label == label);
+
         private static PlaylistInfo Playlist(string contextUri = "spotify:playlist:p1", int tracks = 2)
         {
             var list = new List<PlaylistTrackInfo>();
@@ -260,6 +265,20 @@ namespace ChillWithYou_SpotifyMod.Tests
             Assert.Null(s.QueueRows[0].TrackId);
         }
 
+        // เพดานของคิวคือ 21 เพลง (จาก /me/player/queue) แต่แสดงในลิสต์เดียวไม่แบ่งหน้า - ผู้ใช้ทดสอบ
+        // ในเกมแล้วพบว่าฟีเจอร์เลื่อนหน้าใช้งานไม่ได้ เลยถอดออก ให้เลื่อนสกอลดูแถวที่เหลือแทน
+        [Fact]
+        public void ContextLoaded_TwentyOneTracks_ShowsAllInOneList()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            PanelState s = vm.ContextLoaded(Playlist(tracks: 21));
+
+            Assert.Equal(21, s.QueueRows.Count);
+            Assert.Equal("1", s.QueueRows[0].Index);
+            Assert.Equal("21", s.QueueRows[20].Index);
+        }
+
         // === คิวเลื่อนหน้าต่าง (เพลงเดินเลยแถวสุดท้ายบนจอ) ===
 
         private static List<PlaylistTrackInfo> Window(params string[] ids)
@@ -328,6 +347,157 @@ namespace ChillWithYou_SpotifyMod.Tests
             Assert.Equal(rev, s.QueueRevision);
             Assert.False(s.NeedsReflow);
         }
+
+        // === ระดับเสียง ===
+
+        private static SpotifyNowPlayingInfo TrackWithVolume(int? volume, bool supportsVolume = true)
+        {
+            SpotifyNowPlayingInfo info = Track();
+            info.VolumePercent = volume;
+            info.SupportsVolume = supportsVolume;
+            return info;
+        }
+
+        [Fact]
+        public void NowPlayingUpdated_ShowsVolumeRowWhenDeviceReportsIt()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            PanelState s = vm.NowPlayingUpdated(TrackWithVolume(45));
+
+            Assert.True(s.VolumeRowVisible);
+            Assert.Equal(45, s.VolumePercent);
+            Assert.True(s.NeedsReflow); // แถวโผล่ = โครงสร้างเปลี่ยน ต้อง reflow
+        }
+
+        // อุปกรณ์ที่สั่งเสียงผ่าน Web API ไม่ได้ - ซ่อนแถบไปเลย ลากแล้วไม่เกิดอะไรน่าสับสนกว่า
+        [Fact]
+        public void NowPlayingUpdated_HidesVolumeRowWhenUnsupported()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+
+            Assert.False(vm.NowPlayingUpdated(TrackWithVolume(45, supportsVolume: false)).VolumeRowVisible);
+            Assert.False(vm.NowPlayingUpdated(TrackWithVolume(null)).VolumeRowVisible);
+        }
+
+        [Fact]
+        public void NowPlayingUpdated_NoTrackHidesVolumeRow()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            vm.NowPlayingUpdated(TrackWithVolume(45));
+
+            PanelState s = vm.NowPlayingUpdated(null);
+
+            Assert.False(s.VolumeRowVisible);
+            Assert.True(s.NeedsReflow);
+        }
+
+        // แถวไม่ได้โผล่/หาย = ไม่ต้อง reflow (แค่เลื่อนค่าในแถบเดิม)
+        [Fact]
+        public void NowPlayingUpdated_VolumeChangeAloneDoesNotReflow()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            vm.NowPlayingUpdated(TrackWithVolume(45));
+
+            PanelState s = vm.NowPlayingUpdated(TrackWithVolume(70));
+
+            Assert.Equal(70, s.VolumePercent);
+            Assert.False(s.NeedsReflow);
+        }
+
+        // === สุ่มเพลง / เล่นซ้ำ ===
+
+        [Fact]
+        public void RepeatCycle_FollowsSpotifyOrderAndWrapsAround()
+        {
+            Assert.Equal(RepeatMode.Context, RepeatModes.Next(RepeatMode.Off));
+            Assert.Equal(RepeatMode.Track, RepeatModes.Next(RepeatMode.Context));
+            Assert.Equal(RepeatMode.Off, RepeatModes.Next(RepeatMode.Track)); // ครบรอบกลับมาปิด
+        }
+
+        // การแปลงค่า wire ("track"/"context"/"off") ย้ายไปเป็นเรื่องภายในของ SpotifyApi แล้ว
+        // (ไฟล์นั้นพึ่ง Unity เลยไม่อยู่บน bench - เหมือน JSON parsing ที่เหลือทั้งหมดของชั้น API)
+
+        [Fact]
+        public void NowPlayingUpdated_CarriesShuffleAndRepeat()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+
+            SpotifyNowPlayingInfo info = Track();
+            info.ShuffleOn = true;
+            info.RepeatMode = RepeatMode.Track;
+            PanelState s = vm.NowPlayingUpdated(info);
+
+            Assert.True(s.ShuffleOn);
+            Assert.Equal(RepeatMode.Track, s.RepeatMode);
+        }
+
+        // ไม่มีเพลงเล่นอยู่ = ไม่มีสถานะจริง ปุ่มต้องไม่ค้างเขียวจากเพลงก่อนหน้า
+        [Fact]
+        public void NowPlayingUpdated_NoTrackResetsShuffleAndRepeat()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            SpotifyNowPlayingInfo info = Track();
+            info.ShuffleOn = true;
+            info.RepeatMode = RepeatMode.Context;
+            vm.NowPlayingUpdated(info);
+
+            PanelState s = vm.NowPlayingUpdated(null);
+
+            Assert.False(s.ShuffleOn);
+            Assert.Equal(RepeatMode.Off, s.RepeatMode);
+        }
+
+        // กดแล้วเปลี่ยนทันที ไม่รอ Spotify ตอบ - และผู้เรียกคืนค่าเดิมได้เมื่อคำสั่งไม่ผ่าน
+        [Fact]
+        public void LocalToggles_FlipImmediatelyAndCanRevert()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+
+            Assert.True(vm.LocalShuffleToggled(true).ShuffleOn);
+            Assert.False(vm.LocalShuffleToggled(false).ShuffleOn); // สั่งไม่ผ่าน -> คืนค่าเดิม
+            Assert.False(vm.Current.NeedsReflow);
+
+            Assert.Equal(RepeatMode.Track, vm.LocalRepeatChanged(RepeatMode.Track).RepeatMode);
+            Assert.Equal(RepeatMode.Off, vm.LocalRepeatChanged(RepeatMode.Off).RepeatMode);
+        }
+
+        // บั๊กจริง: เดิมปล่อยนิ้วแล้วค่าใหม่ไม่ได้ลง state เลย พอ Apply ครั้งถัดไป (เกิดได้จากทุก event
+        // ไม่ใช่แค่ poll) เอาค่าเก่าจากเซิร์ฟเวอร์มาเขียนทับ แถบเลยเด้งกลับที่เดิมทันทีที่ปล่อย
+        [Fact]
+        public void LocalVolumeChanged_KeepsTheDraggedValueUntilThePollCorrectsIt()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            vm.NowPlayingUpdated(TrackWithVolume(20));
+
+            Assert.Equal(80, vm.LocalVolumeChanged(80).VolumePercent);
+            Assert.False(vm.Current.NeedsReflow);
+
+            // ค่าจริงจาก Spotify ยังเป็นคนตัดสินสุดท้าย (คำสั่งพลาดก็จะถูกแก้เองรอบถัดไป)
+            Assert.Equal(35, vm.NowPlayingUpdated(TrackWithVolume(35)).VolumePercent);
+        }
+
+        [Fact]
+        public void LocalVolumeChanged_ClampsOutOfRangeValues()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+
+            Assert.Equal(0, vm.LocalVolumeChanged(-5).VolumePercent);
+            Assert.Equal(100, vm.LocalVolumeChanged(150).VolumePercent);
+        }
+
+        // หมายเหตุ: เคยมีเทสต์ของปุ่มเซฟเพลง + แถว Liked Songs ใน My Lists ตรงนี้ แต่ฟีเจอร์
+        // ถูกถอดออก (endpoint /me/tracks โดน 403 ใน development mode) - Liked Songs ยังดูได้
+        // ผ่านคิว (context "spotify:user:*:collection") ตามเทสต์ Plan_CollectionContext ใน
+        // RefreshCoordinatorTests.cs
 
         // === รายการอุปกรณ์ / ย้ายการเล่น ===
 
@@ -440,7 +610,7 @@ namespace ChillWithYou_SpotifyMod.Tests
             vm.MyPlaylistsArrived(new List<UserPlaylistInfo> { new UserPlaylistInfo { Id = "p1", Name = "Mix" } });
 
             Assert.Equal(ResultsMode.MyPlaylists, vm.Current.ResultsMode);
-            Assert.Equal("My Playlists", vm.Current.ResultsSections[0].Label);
+            Assert.Equal("Mix", Section(vm.Current, "My Playlists").Rows[0].Title);
         }
 
         [Fact]
@@ -707,8 +877,7 @@ namespace ChillWithYou_SpotifyMod.Tests
             Assert.True(vm.MyListsClicked());
             vm.MyPlaylistsArrived(new List<UserPlaylistInfo> { new UserPlaylistInfo { Id = "p", Name = "L", TrackCount = 5 } });
             Assert.Equal(ResultsMode.MyPlaylists, vm.Current.ResultsMode);
-            Assert.Equal("My Playlists", vm.Current.ResultsSections[0].Label);
-            Assert.Equal("5 tracks", vm.Current.ResultsSections[0].Rows[0].Sub);
+            Assert.Equal("5 tracks", Section(vm.Current, "My Playlists").Rows[0].Sub);
 
             // กดซ้ำ: หุบ ไม่ fetch
             Assert.False(vm.MyListsClicked());
@@ -747,8 +916,8 @@ namespace ChillWithYou_SpotifyMod.Tests
                 new UserPlaylistInfo { Id = "p2", Name = "No cover", TrackCount = 1 },
             });
 
-            Assert.Equal("list.jpg", s.ResultsSections[0].Rows[0].ImageUrl);
-            Assert.Null(s.ResultsSections[0].Rows[1].ImageUrl);
+            Assert.Equal("list.jpg", Section(s, "My Playlists").Rows[0].ImageUrl);
+            Assert.Null(Section(s, "My Playlists").Rows[1].ImageUrl);
         }
 
         // /me/playlists คืน total = 0 มาเป็นประจำ - "0 tracks" ทำให้เข้าใจผิดว่า playlist ว่าง
@@ -765,8 +934,8 @@ namespace ChillWithYou_SpotifyMod.Tests
                 new UserPlaylistInfo { Id = "p2", Name = "Known size", TrackCount = 7 },
             });
 
-            Assert.Null(s.ResultsSections[0].Rows[0].Sub);
-            Assert.Equal("7 tracks", s.ResultsSections[0].Rows[1].Sub);
+            Assert.Null(Section(s, "My Playlists").Rows[0].Sub);
+            Assert.Equal("7 tracks", Section(s, "My Playlists").Rows[1].Sub);
         }
 
         // playlist ตั้งใจไม่มีการกาง - กดแถวแล้วสั่งเล่นทั้งชุดตรงๆ (ทั้ง My Lists และผลค้นหา)
@@ -780,8 +949,8 @@ namespace ChillWithYou_SpotifyMod.Tests
             PanelState s = vm.MyPlaylistsArrived(
                 new List<UserPlaylistInfo> { new UserPlaylistInfo { Id = "p1", Name = "Mix" } });
 
-            PanelRow row = s.ResultsSections[0].Rows[0];
-            Assert.Single(s.ResultsSections[0].Rows);
+            PanelRow row = Section(s, "My Playlists").Rows[0];
+            Assert.Single(Section(s, "My Playlists").Rows);
             Assert.Null(row.Right);
             Assert.False(row.Action.IsToggle);
             Assert.Equal(RowActionKind.PlayContext, row.Action.Kind);
@@ -834,13 +1003,13 @@ namespace ChillWithYou_SpotifyMod.Tests
             vm.ResetForInject(loggedIn: true);
 
             vm.MyPlaylistsArrived(null);
-            Assert.Equal("Failed to load playlists, try again", vm.Current.ResultsSections[0].Message);
+            Assert.Equal("Failed to load playlists, try again", Section(vm.Current, "My Playlists").Message);
             Assert.Equal(ResultsMode.MyPlaylists, vm.Current.ResultsMode); // กดซ้ำแล้วหุบ error ได้
 
             vm.MyListsClicked(); // หุบ
             vm.MyListsClicked(); // ขอใหม่
             vm.MyPlaylistsArrived(new List<UserPlaylistInfo>());
-            Assert.Equal("No playlists in this account", vm.Current.ResultsSections[0].Message);
+            Assert.Equal("No playlists in this account", Section(vm.Current, "My Playlists").Message);
         }
 
         // === ลบคำค้น ===

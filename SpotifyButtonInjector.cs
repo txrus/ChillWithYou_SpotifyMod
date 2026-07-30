@@ -38,6 +38,17 @@ namespace ChillWithYou_SpotifyMod
 
         private static GameObject _controlsRow;
         private static GameObject _connectRow;
+
+        // แถบระดับเสียงของอุปกรณ์ที่เล่นอยู่ (มุมขวาของแถว transport) - ซ่อนเมื่ออุปกรณ์
+        // สั่งเสียงผ่าน Web API ไม่ได้
+        private static GameObject _volumeRow;
+        private static Slider _volumeSlider;
+        private static Text _volumeValueText;
+        private static bool _isVolumeScrubbing; // กำลังลากอยู่ - ห้ามให้ค่าที่ poll มาเขียนทับนิ้ว
+
+        // สุ่มเพลง / เล่นซ้ำ - ตัวหนังสือบนปุ่มบอกสถานะด้วยสี (จาง = ปิด / เขียว = เปิด)
+        private static Text _shuffleLabel;
+        private static Text _repeatLabel;
         private static GameObject _queueList;
         private static GameObject _playlistHeader;
         private static Image _playlistImage;
@@ -254,14 +265,72 @@ namespace ChillWithYou_SpotifyMod
                 hlg.childAlignment = TextAnchor.MiddleCenter;
 
                 // motif เดียวกับ transport ของเกม: ปุ่มข้างเป็นวงแหวน ปุ่มกลาง (play/pause) วงกลมขาวทึบ
+                // เรียงแบบเดียวกับแอป Spotify: สุ่ม - ย้อน - เล่น - ถัดไป - ซ้ำ (ข้างละตัวจึงยังสมดุล
+                // และปุ่มหลักยังอยู่กึ่งกลางแถวเป๊ะโดยไม่ต้องใส่ตัวถ่วง)
+                Button shuffleBtn = SpotifyUiKit.CreateCircleButton(_controlsRow.transform, "⇄", 30f, solid: false, ringColor: SpotifyUiKit.LineSoft);
+                _shuffleLabel = shuffleBtn.GetComponentInChildren<Text>();
+                if (_shuffleLabel != null) _shuffleLabel.fontSize = 14;
+                // ไอคอนเล็กเกินจะดูออกว่าเป็นปุ่มอะไร - ป้ายชื่อลอยขึ้นตอนชี้เมาส์ค้าง
+                GameObject shuffleTip = SpotifyUiKit.CreateButtonTooltip(shuffleBtn.transform, "Shuffle");
+                SpotifyUiKit.AddHoverCallbacks(shuffleBtn.gameObject,
+                    () => shuffleTip.SetActive(true), () => shuffleTip.SetActive(false));
+
                 Button prevBtn = SpotifyUiKit.CreateCircleButton(_controlsRow.transform, "<<", 36f, solid: false);
                 Button playPauseBtn = SpotifyUiKit.CreateCircleButton(_controlsRow.transform, "||", 46f, solid: true);
                 _playPauseLabel = playPauseBtn.GetComponentInChildren<Text>();
                 Button nextBtn = SpotifyUiKit.CreateCircleButton(_controlsRow.transform, ">>", 36f, solid: false);
 
+                Button repeatBtn = SpotifyUiKit.CreateCircleButton(_controlsRow.transform, "↻", 30f, solid: false, ringColor: SpotifyUiKit.LineSoft);
+                _repeatLabel = repeatBtn.GetComponentInChildren<Text>();
+                if (_repeatLabel != null) _repeatLabel.fontSize = 14;
+                GameObject repeatTip = SpotifyUiKit.CreateButtonTooltip(repeatBtn.transform, "Repeat");
+                SpotifyUiKit.AddHoverCallbacks(repeatBtn.gameObject,
+                    () => repeatTip.SetActive(true), () => repeatTip.SetActive(false));
+
                 prevBtn.onClick.AddListener(() => SafeFireAndForget(OnPrevClicked()));
                 playPauseBtn.onClick.AddListener(() => SafeFireAndForget(OnPlayPauseClicked()));
                 nextBtn.onClick.AddListener(() => SafeFireAndForget(OnNextClicked()));
+                shuffleBtn.onClick.AddListener(() => SafeFireAndForget(OnShuffleClicked()));
+                repeatBtn.onClick.AddListener(() => SafeFireAndForget(OnRepeatClicked()));
+
+                // --- แถบระดับเสียง: มุมขวาของแถว transport กินความกว้าง 20% ---
+                // ignoreLayout = ไม่ร่วมวง HorizontalLayoutGroup ของแถว -> ปุ่ม transport ยังถูกจัด
+                // กึ่งกลางเป๊ะเหมือนไม่มีแถบนี้อยู่ และวางตำแหน่งด้วย anchor แทน (ขวาสุด 20% ของแถว)
+                _volumeRow = new GameObject("VolumeArea");
+                _volumeRow.transform.SetParent(_controlsRow.transform, worldPositionStays: false);
+                RectTransform volumeRt = _volumeRow.AddComponent<RectTransform>();
+                LayoutElement volumeLe = _volumeRow.AddComponent<LayoutElement>();
+                volumeLe.ignoreLayout = true;
+                volumeRt.anchorMin = new Vector2(0.8f, 0.5f);
+                volumeRt.anchorMax = new Vector2(1f, 0.5f);
+                volumeRt.offsetMin = new Vector2(0f, -9f);
+                volumeRt.offsetMax = new Vector2(-2f, 9f); // สูง 18px กึ่งกลางแนวตั้งของแถว 50px
+
+                HorizontalLayoutGroup volumeHlg = _volumeRow.AddComponent<HorizontalLayoutGroup>();
+                volumeHlg.childForceExpandWidth = false;
+                volumeHlg.childForceExpandHeight = true;
+                volumeHlg.childControlWidth = true;
+                volumeHlg.childControlHeight = true;
+                volumeHlg.spacing = 6f; // เผื่อระยะห่างชัดเจนระหว่างแถบกับตัวเลข % กันชนกัน
+                volumeHlg.childAlignment = TextAnchor.MiddleRight;
+
+                _volumeSlider = SpotifyUiKit.CreateProgressSlider(_volumeRow.transform);
+                // เดิมใช้ flexibleWidth=1 (ยืดเต็มพื้นที่ที่เหลือ) แต่ในเกมจริงแถบไปทับตัวเลข % แทนที่
+                // จะเรียงต่อกัน - ล็อกเป็นความกว้างตายตัวแทน ตัดความเป็นไปได้ที่ HLG จะคำนวณพื้นที่
+                // เหลือผิดพลาดแล้วยืดแถบเกินขอบเขตที่กันไว้ให้ตัวเลข
+                LayoutElement volumeSliderLe = _volumeSlider.GetComponent<LayoutElement>();
+                volumeSliderLe.flexibleWidth = 0f;
+                volumeSliderLe.preferredWidth = 52f;
+                // ต่างจากแถบ progress ที่เปิด/ปิดตามว่ามีเพลงไหม - ทั้งกล่องนี้ซ่อนอยู่แล้วเมื่อสั่งเสียงไม่ได้
+                _volumeSlider.interactable = true;
+                _volumeSlider.onValueChanged.AddListener(OnVolumeSliderChanged);
+                // ส่งคำสั่งตอนปล่อยนิ้วครั้งเดียว เหมือน seek - ลากผ่านทั้งแถบไม่ได้แปลว่าต้องยิง API ทุกเฟรม
+                SpotifyUiKit.AddPressCallbacks(_volumeSlider.gameObject, OnVolumePressed, OnVolumeReleased);
+                _isVolumeScrubbing = false;
+
+                _volumeValueText = SpotifyUiKit.CreateInlineText(_volumeRow.transform, "100%", 30f);
+                _volumeValueText.color = SpotifyUiKit.TextSecondary;
+                _volumeValueText.fontSize = 9;
 
                 _statusText = SpotifyUiKit.CreateText(_spotifySection.transform, "", 11, TextAnchor.MiddleCenter);
                 _statusText.color = new Color(1f, 0.6f, 0.4f, 1f);
@@ -511,6 +580,98 @@ namespace ChillWithYou_SpotifyMod
             await RefreshAfterPlay(trackBefore, _refresh.LastSeenContextUri);
         }
 
+        // === คำสั่งแบบ optimistic: เปลี่ยนหน้าจอทันที -> ยิงคำสั่ง -> ไม่ผ่านค่อยว่ากัน ===
+
+        // ตารางนโยบาย reconcile ของทุกคำสั่ง optimistic ในแผง - เขียนไว้ที่เดียว:
+        //   ย้อนกลับเมื่อสั่งไม่ผ่าน (ผ่านทางนี้): shuffle / repeat / save
+        //     ปุ่มพวกนี้โชว์สถานะค้างไว้ ถ้าไม่ย้อน ปุ่มจะโกหกไปเรื่อยๆ จนกว่า poll จะมาแก้
+        //   ปล่อยให้ poll รอบถัดไปแก้ (ไม่ผ่านทางนี้): volume / seek / play-pause
+        //     เป็นค่าที่ผู้เล่นตั้งเองด้วยการลาก การเด้งกลับกลางคันน่ารำคาญกว่า และค่า
+        //     จริงจากเซิร์ฟเวอร์มาทับภายใน 6 วิอยู่แล้ว (ดู OnVolumeReleased/OnSeekReleased)
+        // เรียกจาก onClick ซึ่งอยู่บน main thread จนถึง await แรก - Apply ตัวแรกจึงเรียกตรงได้
+        // คืน true เมื่อคำสั่งผ่าน ให้ผู้เรียกทำงานต่อเนื่องได้ (เช่น shuffle ดึงคิวใหม่ตาม)
+        private static async Task<bool> RunOptimistic(PanelState optimistic, Func<Task<bool>> send, Func<PanelState> revert)
+        {
+            Apply(optimistic);
+            if (await send()) return true;
+
+            Plugin.RunOnMainThread(() => Apply(revert()));
+            return false;
+        }
+
+        // สั่งไม่สำเร็จ เช่นบัญชี Free หรือไม่มี active device -> ปุ่มเด้งกลับ
+        private static async Task OnShuffleClicked()
+        {
+            if (!SpotifyAuth.IsLoggedIn) return;
+
+            bool before = _vm.Current.ShuffleOn;
+            bool ok = await RunOptimistic(
+                _vm.LocalShuffleToggled(!before),
+                () => SpotifyApi.SetShuffle(!before),
+                () => _vm.LocalShuffleToggled(before));
+
+            // โหมดสุ่มเปลี่ยน = ลำดับเพลงถัดไปเปลี่ยนทั้งชุด - ดึงคิวมาแสดงใหม่ให้ตรงของจริง
+            // (รอครู่หนึ่งให้ Spotify จัดคิวใหม่เสร็จก่อน ไม่งั้นได้คิวชุดเก่ากลับมา)
+            // ต้องล้าง cache ของ SpotifyWebApi ด้วย ไม่ใช่แค่ความจำของ _refresh - GetCurrentPlaylistAsync
+            // จำผลไว้แยกต่างหาก คีย์ด้วย playlist id เฉยๆ (ไม่รู้จัก shuffle) ถ้าไม่ล้างจะได้คิวเก่า
+            // ก่อนสลับ shuffle กลับมาเงียบๆ (เหมือนปุ่ม ↻ ที่ header ทำอยู่แล้ว)
+            if (ok)
+            {
+                await Task.Delay(500);
+                SpotifyWebApi.InvalidateCache();
+                _refresh.InvalidateContext();
+                await RefreshNowPlaying();
+            }
+        }
+
+        // กดวนทีละขั้น: ปิด -> ซ้ำทั้งชุด -> ซ้ำเพลงเดียว -> ปิด (ลำดับเดียวกับแอป Spotify)
+        private static Task OnRepeatClicked()
+        {
+            if (!SpotifyAuth.IsLoggedIn) return Task.CompletedTask;
+
+            RepeatMode before = _vm.Current.RepeatMode;
+            RepeatMode next = RepeatModes.Next(before);
+            return RunOptimistic(
+                _vm.LocalRepeatChanged(next),
+                () => SpotifyApi.SetRepeat(next),
+                () => _vm.LocalRepeatChanged(before));
+        }
+
+        // === ระดับเสียง ===
+
+        // ตัวเลข % เดินตามนิ้วทันทีระหว่างลาก (ค่าจริงส่งตอนปล่อย) - ผูกกับ onValueChanged เลย
+        // เลยครอบคลุมทั้งการลากของผู้เล่นและการตั้งค่าจากผลที่ poll มา
+        private static void OnVolumeSliderChanged(float value)
+        {
+            if (_volumeValueText != null)
+                _volumeValueText.text = $"{Mathf.RoundToInt(value * 100f)}%";
+        }
+
+        private static void OnVolumePressed() => _isVolumeScrubbing = true;
+
+        private static void OnVolumeReleased()
+        {
+            if (!_isVolumeScrubbing) return;
+            _isVolumeScrubbing = false;
+            if (_volumeSlider == null) return;
+
+            int percent = Mathf.RoundToInt(_volumeSlider.value * 100f);
+
+            // จดค่าใหม่ลง state ทันทีไม่ต้องรอ Spotify ตอบ - เหมือนที่ OnSeekReleased ขยับนาฬิกา
+            // ในเครื่องเอง ไม่งั้น Apply ครั้งถัดไปจะเอาค่าเก่าจาก poll มาเขียนทับจนแถบเด้งกลับ
+            // (คำสั่งพลาดก็มี poll รอบถัดไปแก้ค่าให้เองใน 6 วิ)
+            Apply(_vm.LocalVolumeChanged(percent));
+
+            Plugin.Log.LogInfo($"[SpotifyPatches] ตั้งระดับเสียงเป็น {percent}%");
+            SafeFireAndForget(SpotifyApi.SetVolume(percent));
+        }
+
+        // === คลังเพลง ===
+
+        // หมายเหตุ: เคยมีปุ่มหัวใจ (เซฟเพลงเข้าคลัง) กับแถว Liked Songs ตรงนี้ แต่ endpoint
+        // ครอบครัว /me/tracks โดน 403 ใน development mode ทั้งที่ scope ครบ เลยถอดออกทั้งชุด
+        // เล่น Liked Songs จากแอปแล้วแผงยังโชว์คิวได้ตามปกติ (ผ่าน context "spotify:user:*:collection")
+
         private static void OnConnectClicked()
         {
             Apply(_vm.ConnectClicked());
@@ -574,7 +735,7 @@ namespace ChillWithYou_SpotifyMod
                 return true;
             }
 
-            PlaylistInfo playlist = await SpotifyWebApi.GetCurrentPlaylistAsync(plan.PlaylistId, maxTracks: 21);
+            PlaylistInfo playlist = await SpotifyWebApi.GetCurrentPlaylistAsync(plan.PlaylistId, maxTracks: 21, plan.ShuffleOn);
             _refresh.OnQueueShown(playlist?.Tracks);
             Plugin.RunOnMainThread(() => Apply(_vm.ContextLoaded(playlist)));
             return playlist != null && playlist.Id == plan.PlaylistId && playlist.Tracks != null;
@@ -1018,6 +1179,24 @@ namespace ChillWithYou_SpotifyMod
             if (_playlistHeader != null) _playlistHeader.SetActive(s.PlaylistHeaderVisible);
             if (_queueList != null) _queueList.SetActive(s.QueueListVisible);
             if (_searchRow != null) _searchRow.SetActive(s.SearchRowVisible);
+            if (_volumeRow != null) _volumeRow.SetActive(s.VolumeRowVisible);
+
+            // ระหว่างผู้เล่นลากอยู่ ค่าที่ poll มาช้ากว่านิ้วเสมอ - เขียนทับแล้วแถบจะกระตุกกลับ
+            if (_volumeSlider != null && !_isVolumeScrubbing)
+                _volumeSlider.value = Mathf.Clamp01(s.VolumePercent / 100f);
+
+            // สุ่มเพลง: จาง = ปิด / เขียว = เปิด (ปุ่มอยู่ที่เดิมเสมอ ไม่ได้ซ่อน)
+            if (_shuffleLabel != null)
+                _shuffleLabel.color = s.ShuffleOn ? SpotifyUiKit.ButtonActive : SpotifyUiKit.TextSecondary;
+
+            // เล่นซ้ำ: เลข 1 ต่อท้ายคือซ้ำเพลงเดียว - ต่างจากซ้ำทั้งชุดที่ใช้สัญลักษณ์เดียวกันเปล่าๆ
+            if (_repeatLabel != null)
+            {
+                _repeatLabel.text = s.RepeatMode == RepeatMode.Track ? "↻1" : "↻";
+                _repeatLabel.color = s.RepeatMode == RepeatMode.Off
+                    ? SpotifyUiKit.TextSecondary
+                    : SpotifyUiKit.ButtonActive;
+            }
 
             if (_statusText != null) _statusText.text = s.StatusText ?? "";
             if (_trackTitleText != null) _trackTitleText.text = s.TrackTitle;

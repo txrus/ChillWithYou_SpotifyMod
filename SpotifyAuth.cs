@@ -22,6 +22,9 @@ namespace ChillWithYou_SpotifyMod
 
         // playlist-read-private/collaborative จำเป็นสำหรับอ่าน track list ของ playlist ส่วนตัว
         // (Daily Mix / Discover Weekly ยังไงก็อ่านไม่ได้ - Spotify ตัด API access ไปตั้งแต่ปลายปี 2024)
+        // หมายเหตุ: เคยลองขอ user-library-read/modify เพื่อทำปุ่มหัวใจ + Liked Songs แล้ว
+        // แต่ endpoint ครอบครัว /me/tracks โดน 403 ใน development mode ทั้งที่ scope ครบ
+        // เลยถอดออกทั้งชุด - อย่าเสียเวลาลองใหม่จนกว่า Spotify จะเปลี่ยนนโยบาย
         private const string Scopes =
             "user-read-playback-state user-modify-playback-state user-read-currently-playing " +
             "playlist-read-private playlist-read-collaborative";

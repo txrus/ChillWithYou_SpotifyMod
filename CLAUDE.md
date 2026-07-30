@@ -8,6 +8,10 @@ BepInEx mod for *Chill with You: Lo-Fi Story* that adds an in-game Spotify playe
 
 Issues and PRDs are tracked in this repo's GitHub Issues via the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
+### Triage labels
+
+The five canonical triage roles use their default label strings (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
 ### Domain docs
 
 Single-context: a `CONTEXT.md` glossary and `docs/adr/` at the repo root, both created lazily by `/domain-modeling` when terms or decisions get resolved. See `docs/agents/domain.md`.

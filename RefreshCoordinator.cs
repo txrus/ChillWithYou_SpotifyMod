@@ -37,6 +37,11 @@ namespace ChillWithYou_SpotifyMod
         public string ContextUri;   // Kind == Queue
         public string DisplayName;  // Kind == Queue: ชื่อที่จะโชว์บน header (ชื่อศิลปิน)
         public byte[] CoverBytes;   // Kind == Queue: ปก header (album ยืมปกเพลงที่เล่นอยู่ / artist = null)
+
+        // Kind == Playlist: เปิด shuffle อยู่ไหม - /playlists/{id} คืนลำดับเพลงตายตัวเสมอ ไม่ขยับตาม
+        // shuffle เลย ผู้เรียกต้องรู้ค่านี้เพื่อสลับไปใช้คิวจริงจาก /me/player/queue แทนตอน shuffle เปิด
+        // (ดู SpotifyWebApi.GetCurrentPlaylistAsync)
+        public bool ShuffleOn;
     }
 
     public class RefreshCoordinator
@@ -90,20 +95,28 @@ namespace ChillWithYou_SpotifyMod
             string playlistId = info?.PlaylistContextId;
             if (!string.IsNullOrEmpty(contextUri) && string.IsNullOrEmpty(playlistId))
             {
-                // artist/album: อ่านรายชื่อเพลงของ context ตรงๆ ไม่ได้แล้ว (dev mode) -> ใช้คิวแทน
-                // ปก: album ทุกเพลงใช้ปกเดียวกัน ยืมปกเพลงที่เล่นอยู่ได้เลย / artist ปกเปลี่ยน
-                // ตามอัลบั้มของแต่ละเพลง ใช้ไม่ได้ -> null แล้วให้ VM ซ่อนช่องรูป
+                // artist/album/Liked Songs: อ่านรายชื่อเพลงของ context ตรงๆ ไม่ได้ (dev mode
+                // บล็อกทั้ง track list และ /me/tracks) -> ใช้คิวแทน
+                // ปก: album ทุกเพลงใช้ปกเดียวกัน ยืมปกเพลงที่เล่นอยู่ได้เลย / artist กับ Liked Songs
+                // ปกเปลี่ยนตามอัลบั้มของแต่ละเพลง ใช้ไม่ได้ -> null แล้วให้ VM ซ่อนช่องรูป
+                bool coverVaries = SpotifyContext.RowsViewOnly(contextUri);
                 return new ContextFetchPlan
                 {
                     Kind = ContextFetchKind.Queue,
                     ContextUri = contextUri,
-                    DisplayName = info?.Artist,
-                    CoverBytes = SpotifyContext.IsArtist(contextUri) ? null : info?.ThumbnailBytes,
+                    DisplayName = SpotifyContext.IsCollection(contextUri) ? "Liked Songs" : info?.Artist,
+                    CoverBytes = coverVaries ? null : info?.ThumbnailBytes,
                 };
             }
 
             // playlist จริง (id ไม่ null) หรือไม่ได้เล่นจาก context เลย (ทั้งคู่ null = เคลียร์คิว)
-            return new ContextFetchPlan { Kind = ContextFetchKind.Playlist, PlaylistId = playlistId };
+            // ส่ง ShuffleOn ไปด้วยเสมอแม้ playlistId จะ null - ผู้เรียกใช้แค่ตอนมี playlist จริง
+            return new ContextFetchPlan
+            {
+                Kind = ContextFetchKind.Playlist,
+                PlaylistId = playlistId,
+                ShuffleOn = info?.ShuffleOn ?? false,
+            };
         }
 
         private static ContextFetchPlan NoFetch => new ContextFetchPlan { Kind = ContextFetchKind.None };

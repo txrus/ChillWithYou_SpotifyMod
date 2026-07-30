@@ -35,7 +35,18 @@ namespace ChillWithYou_SpotifyMod
 
         // playlistId มาจาก SpotifyNowPlayingInfo.PlaylistContextId ที่ SpotifyApi.GetCurrentlyPlaying()
         // parse ไว้ให้แล้ว (จาก /me/player call เดียวกัน) ไม่ต้องยิง endpoint แยกมาหา playlist id เอง
-        public static async Task<PlaylistInfo> GetCurrentPlaylistAsync(string playlistId, int maxTracks = 10)
+        //
+        // shuffleOn: /playlists/{id} คืนลำดับเพลงตามที่บันทึกไว้เสมอ ไม่ขยับตาม shuffle เลย
+        // (เป็น listing เฉยๆ ไม่เกี่ยวกับ playback state) - เปิด shuffle แล้วคิวบนจอจะไม่มีวันตรงกับ
+        // ลำดับที่ Spotify เล่นจริงถ้ายังอ่านจากตรงนี้ ต้องสลับไปใช้ /me/player/queue แทน (คิวจริง
+        // ตามลำดับเล่นปัจจุบัน) เหมือนกับที่ track list ว่างเปล่าใช้เป็น fallback อยู่แล้วด้านล่าง
+        //
+        // ⚠️ shuffleOn ไม่ได้อยู่ใน cache key (ดูจุด "ถ้าเป็น ID เดิม" ด้านล่าง) - cache คีย์ด้วย
+        // playlistId เฉยๆ เพราะฉะนั้นถ้าเรียกด้วย playlistId เดิมแต่ shuffleOn ต่างจากครั้งก่อน
+        // จะได้ผลลัพธ์ของ shuffle เก่ากลับมาเงียบๆ (ไม่ error แต่ผิด) ผู้เรียกทุกจุดที่ shuffle
+        // เปลี่ยนสถานะ (ดู OnShuffleClicked) ต้องเรียก InvalidateCache() เองก่อนเรียกเมธอดนี้ใหม่ -
+        // เมธอดนี้ไม่บังคับให้เอง
+        public static async Task<PlaylistInfo> GetCurrentPlaylistAsync(string playlistId, int maxTracks = 10, bool shuffleOn = false)
         {
             // ตอนโดน rate limit คืน playlist เดิมที่ cache ไว้ ไม่ปล่อยให้ UI ว่าง
             if (SpotifyRateLimiter.IsBlocked)
@@ -55,6 +66,8 @@ namespace ChillWithYou_SpotifyMod
                 }
 
                 // 🌟 ถ้าเป็น ID เดิม ให้คืนค่าที่จำไว้ทันที (ไม่ยิง API ซ้ำ)
+                // เช็คแค่ playlistId - ไม่รู้จัก shuffleOn เลย ถ้า shuffle เปลี่ยนไปตั้งแต่ครั้งก่อน
+                // ที่ cache ไว้ จะคืนผลลัพธ์เก่าที่ shuffle ไม่ตรงกันแบบเงียบๆ (ดูคำเตือนเหนือเมธอดนี้)
                 if (playlistId == _lastPlaylistId && _cachedPlaylistInfo != null)
                 {
                     return _cachedPlaylistInfo;
@@ -75,11 +88,15 @@ namespace ChillWithYou_SpotifyMod
                     return _cachedPlaylistInfo; // คืนของเก่าไปก่อน (null หรือ playlist ก่อนหน้า) ระหว่างรอ retry
                 }
 
-                if (tracks != null && tracks.Count == 0)
+                // สองเหตุผลที่ต้องทิ้งลำดับเพลงตายตัวจาก /playlists/{id} แล้วใช้คิวจริงแทน:
+                // (1) Spotify ตัด track list ออกจาก response เลย (ข้อจำกัด development mode app)
+                // (2) shuffle เปิดอยู่ - /playlists/{id} ไม่ขยับตาม shuffle เลย ต่อให้ track list
+                //     มาครบก็เป็นลำดับที่ไม่ตรงกับที่ Spotify กำลังเล่นจริง
+                if (shuffleOn || (tracks != null && tracks.Count == 0))
                 {
-                    // Spotify ตัด track list ออกจาก response (ข้อจำกัด development mode app)
-                    // -> ใช้คิวเพลงจาก /me/player/queue แทน ได้เพลงปัจจุบัน + เพลงถัดไปของ context เดียวกันนี้แหละ
-                    Plugin.Log.LogInfo("[SpotifyWebApi] Track list โดนตัดจาก response - ใช้คิวเพลงจาก /me/player/queue แทน");
+                    Plugin.Log.LogInfo(shuffleOn
+                        ? "[SpotifyWebApi] Shuffle เปิดอยู่ - ใช้คิวเพลงจาก /me/player/queue แทนลำดับตายตัวของ playlist"
+                        : "[SpotifyWebApi] Track list โดนตัดจาก response - ใช้คิวเพลงจาก /me/player/queue แทน");
                     List<PlaylistTrackInfo> queueTracks = await GetQueueTracksAsync(maxTracks);
                     if (queueTracks != null && queueTracks.Count > 0)
                         tracks = queueTracks;
