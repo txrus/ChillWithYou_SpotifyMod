@@ -29,14 +29,31 @@ namespace ChillWithYou_SpotifyMod
         private static string _lastCoverUrl;
         private static byte[] _lastCoverBytes;
 
+        // รหัสผู้ใช้ Spotify (จาก GET /me) - แคชไว้ทั้ง session เพราะไม่มีทางเปลี่ยนได้โดยไม่ login ใหม่
+        // ใช้สร้าง context uri ของคลังเพลง ("spotify:user:{id}:collection") สำหรับปุ่ม Liked Songs
+        private static string _cachedUserId;
+
         // log ว่า token ที่ถืออยู่เป็นของบัญชีไหน - ใช้ไล่เคสที่ล็อกอินคนละบัญชีกับที่ตั้งใจ
         // (เช็คว่าเป็น Premium ผ่าน API ไม่ได้แล้ว Spotify ตัด field product ออกตั้งแต่รอบ ก.พ. 2026)
         public static async Task LogCurrentUser()
         {
             JObject me = await SpotifyGateway.GetJsonAsync("me");
             if (me == null) return;
+            _cachedUserId = (string)me["id"];
             Plugin.Log.LogInfo($"[SpotifyApi] login เป็นบัญชี: id='{me.Value<string>("id")}' " +
                 $"name='{me.Value<string>("display_name")}'");
+        }
+
+        // รหัสผู้ใช้สำหรับสร้าง context uri ของคลังเพลง - ยิง GET /me ครั้งแรกที่เรียกถ้ายังไม่มีแคช
+        // (เช่น login ผ่านปุ่ม Connect ระหว่างเล่น ไม่ใช่ resume session ตอนเปิดเกมที่ LogCurrentUser
+        // เรียกไปแล้ว) คืน null = โหลดพลาด - ผู้เรียกซ่อนปุ่ม Liked Songs ไปเลยดีกว่ากดแล้วเงียบ
+        public static async Task<string> GetCurrentUserIdAsync()
+        {
+            if (_cachedUserId != null) return _cachedUserId;
+            JObject me = await SpotifyGateway.GetJsonAsync("me");
+            if (me == null) return null;
+            _cachedUserId = (string)me["id"];
+            return _cachedUserId;
         }
 
         // คืน true เมื่อ Spotify รับคำสั่งจริง เพื่อให้ UI สลับสถานะเองได้โดยไม่ต้องยิง GET ตามหลัง

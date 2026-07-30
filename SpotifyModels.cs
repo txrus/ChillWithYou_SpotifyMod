@@ -148,10 +148,19 @@ namespace ChillWithYou_SpotifyMod
             !string.IsNullOrEmpty(contextUri) &&
             contextUri.StartsWith("spotify:user:") && contextUri.EndsWith(":collection");
 
-        // แถวคิวของ context นี้กดเล่นไม่ได้: artist ไม่รับ offset ส่วน collection ไม่แน่ว่ารับ
-        // (ทดลองไม่ได้เพราะอ่าน track list ไม่ได้อยู่แล้ว) - แถวที่กดแล้วเงียบแย่กว่าแถวดูเฉยๆ
-        public static bool RowsViewOnly(string contextUri) =>
+        // ปก header เปลี่ยนตามแต่ละเพลงหรือไม่ - artist/Liked Songs ไม่มีปกตัวแทนตัวเดียว (แต่ละเพลง
+        // มาจากอัลบั้มคนละปก) ต่างจาก playlist/album ที่ทุกเพลงใช้ปกเดียวกัน คนละเรื่องกับว่าแถวกด
+        // เล่นได้ไหม (ดู RowsViewOnly) - เดิมสองอย่างนี้ใช้ค่าเดียวกันเพราะ artist บังเอิญเป็นทั้งคู่
+        public static bool HeaderCoverVaries(string contextUri) =>
             IsArtist(contextUri) || IsCollection(contextUri);
+
+        // แถวคิวของ context นี้กดเล่นตามตำแหน่งไม่ได้ - ยืนยันแล้วว่า artist ไม่รับ offset (Spotify
+        // ปฏิเสธคำสั่ง) ส่วน Liked Songs (collection) เปิดให้กดได้แล้ว เพิ่งมีทางเล่น context นี้จริง
+        // เป็นครั้งแรก (ก่อนหน้านี้ทดสอบไม่ได้เพราะไม่เคยเล่นถึงเลย) ถ้า Spotify ปฏิเสธ offset ของ
+        // collection ด้วย ผลคือกดแล้วเพลงไม่ขยับเฉยๆ (ท่าเดียวกับคำสั่งเล่นที่พลาดทุกจุดในมอด)
+        // ไม่มีความเสี่ยงอื่น - ปลอดภัยที่จะลอง
+        public static bool RowsViewOnly(string contextUri) =>
+            IsArtist(contextUri);
 
         // "spotify:album:xxx" -> "ALBUM" / คืน null เมื่อไม่มี context uri หรือเป็นชนิดที่ไม่รู้จัก
         // (ให้ผู้เรียกซ่อน label ไปเลย ดีกว่าเดาผิดแล้วบอกผู้เล่นว่ากำลังเล่นจากอะไรที่ไม่จริง)

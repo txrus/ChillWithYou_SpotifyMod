@@ -4,7 +4,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/) and uses [Semanti
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-07-30
+
+Rolls up four merged PRs that had been sitting unreleased (queue-window-slide fix, device
+transfer, progress-bar hover time, and this round's shuffle/repeat/volume) - bumped to a
+minor version for the same reason 1.2.0 and 1.3.0 were: real new player-facing controls,
+not just bug fixes.
+
 ### Added
+- **A "Liked Songs" row in My Lists** that plays your saved tracks, right above your
+  playlists. This isn't the same feature that got pulled below for hitting a 403 - that one
+  tried to *list* the tracks via `/me/tracks`, which is blocked. This one just sends
+  `spotify:user:{id}:collection` as a `context_uri` to the same `/me/player/play` endpoint
+  every other row already uses, so it never touches the blocked endpoint at all. Once
+  playing, the existing collection-context fallback (also in this release, used for artist
+  and album radio too) takes over and shows the queue labeled "LIKED SONGS".
+  - The context URI needs your Spotify user ID, which the mod fetches once via `GET /me` and
+    caches for the session (reusing the same call `LogCurrentUser` already made at startup,
+    if a session was resumed there).
+  - If the ID can't be fetched, the row is hidden entirely rather than shown and failing
+    silently when tapped.
+  - Lives in its own small section, so a `/me/playlists` failure can't take it down with it.
+  - Rows in the Liked Songs queue are clickable, so you can jump straight to a specific saved
+    track instead of only playing from the top. This needed confirming rather than assuming:
+    the mod already knew Spotify rejects this for an `artist` context, but whether it also
+    rejects it for `collection` had never been tested, since there was previously no way to
+    reach this context at all. Tested in game — Spotify accepts it
+    (`SpotifyContext.RowsViewOnly` no longer treats `collection` the same as `artist`).
 - **Shuffle and repeat buttons** in the controls row, arranged the same way the Spotify app
   does (shuffle - prev - play - next - repeat), so the play button stays centered since one
   button was added on each side.
