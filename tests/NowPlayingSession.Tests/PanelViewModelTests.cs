@@ -72,7 +72,7 @@ namespace ChillWithYou_SpotifyMod.Tests
         {
             var vm = new PanelViewModel();
             vm.ResetForInject(loggedIn: true);
-            vm.MyPlaylistsArrived(new List<UserPlaylistInfo> { new UserPlaylistInfo { Id = "x", Name = "L", TrackCount = 3 } });
+            vm.MyPlaylistsArrived(new List<UserPlaylistInfo> { new UserPlaylistInfo { Id = "x", Name = "L", TrackCount = 3 } }, null);
 
             vm.ResetForInject(loggedIn: true);
 
@@ -607,7 +607,7 @@ namespace ChillWithYou_SpotifyMod.Tests
             vm.DevicesArrived(new List<SpotifyDeviceInfo> { Device("d1", "PC") });
 
             Assert.True(vm.MyListsClicked()); // ไม่ใช่การหุบ device แต่เป็นการสลับไปอีกโหมด
-            vm.MyPlaylistsArrived(new List<UserPlaylistInfo> { new UserPlaylistInfo { Id = "p1", Name = "Mix" } });
+            vm.MyPlaylistsArrived(new List<UserPlaylistInfo> { new UserPlaylistInfo { Id = "p1", Name = "Mix" } }, null);
 
             Assert.Equal(ResultsMode.MyPlaylists, vm.Current.ResultsMode);
             Assert.Equal("Mix", Section(vm.Current, "My Playlists").Rows[0].Title);
@@ -875,7 +875,7 @@ namespace ChillWithYou_SpotifyMod.Tests
 
             // กดครั้งแรก: ยังไม่โชว์ -> ขอ fetch
             Assert.True(vm.MyListsClicked());
-            vm.MyPlaylistsArrived(new List<UserPlaylistInfo> { new UserPlaylistInfo { Id = "p", Name = "L", TrackCount = 5 } });
+            vm.MyPlaylistsArrived(new List<UserPlaylistInfo> { new UserPlaylistInfo { Id = "p", Name = "L", TrackCount = 5 } }, null);
             Assert.Equal(ResultsMode.MyPlaylists, vm.Current.ResultsMode);
             Assert.Equal("5 tracks", Section(vm.Current, "My Playlists").Rows[0].Sub);
 
@@ -896,7 +896,7 @@ namespace ChillWithYou_SpotifyMod.Tests
             var vm = new PanelViewModel();
             vm.ResetForInject(loggedIn: true);
             vm.MyListsClicked();
-            vm.MyPlaylistsArrived(new List<UserPlaylistInfo> { new UserPlaylistInfo { Id = "p", Name = "L", TrackCount = 1 } });
+            vm.MyPlaylistsArrived(new List<UserPlaylistInfo> { new UserPlaylistInfo { Id = "p", Name = "L", TrackCount = 1 } }, null);
 
             vm.SearchResultsArrived(SomeResults());
 
@@ -914,7 +914,7 @@ namespace ChillWithYou_SpotifyMod.Tests
             {
                 new UserPlaylistInfo { Id = "p1", Name = "L", TrackCount = 3, ImageUrl = "list.jpg" },
                 new UserPlaylistInfo { Id = "p2", Name = "No cover", TrackCount = 1 },
-            });
+            }, null);
 
             Assert.Equal("list.jpg", Section(s, "My Playlists").Rows[0].ImageUrl);
             Assert.Null(Section(s, "My Playlists").Rows[1].ImageUrl);
@@ -932,7 +932,7 @@ namespace ChillWithYou_SpotifyMod.Tests
             {
                 new UserPlaylistInfo { Id = "p1", Name = "Unknown size", TrackCount = 0 },
                 new UserPlaylistInfo { Id = "p2", Name = "Known size", TrackCount = 7 },
-            });
+            }, null);
 
             Assert.Null(Section(s, "My Playlists").Rows[0].Sub);
             Assert.Equal("7 tracks", Section(s, "My Playlists").Rows[1].Sub);
@@ -947,7 +947,7 @@ namespace ChillWithYou_SpotifyMod.Tests
             vm.MyListsClicked();
 
             PanelState s = vm.MyPlaylistsArrived(
-                new List<UserPlaylistInfo> { new UserPlaylistInfo { Id = "p1", Name = "Mix" } });
+                new List<UserPlaylistInfo> { new UserPlaylistInfo { Id = "p1", Name = "Mix" } }, null);
 
             PanelRow row = Section(s, "My Playlists").Rows[0];
             Assert.Single(Section(s, "My Playlists").Rows);
@@ -956,6 +956,75 @@ namespace ChillWithYou_SpotifyMod.Tests
             Assert.Equal(RowActionKind.PlayContext, row.Action.Kind);
             Assert.Equal("spotify:playlist:p1", row.Action.ContextUri);
             Assert.Equal("playlist:p1", row.Key); // กดแล้วทาสีค้างได้
+        }
+
+        // === Liked Songs ใน My Lists (เล่นทั้งชุดผ่าน context uri ของคลังเพลง - ไม่ใช่ /me/tracks
+        // ที่โดน 403 ในโหมด dev อ่าน docs/adr/0001-drop-library-integration.md) ===
+
+        [Fact]
+        public void MyPlaylistsArrived_PutsLikedSongsAboveThePlaylists()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            vm.MyListsClicked();
+            PanelState s = vm.MyPlaylistsArrived(
+                new List<UserPlaylistInfo> { new UserPlaylistInfo { Id = "p1", Name = "Mix" } },
+                "spotify:user:u1:collection");
+
+            Assert.Equal("Library", s.ResultsSections[0].Label);
+            PanelRow liked = s.ResultsSections[0].Rows[0];
+            Assert.Equal("Liked Songs", liked.Title);
+            Assert.Equal(RowActionKind.PlayContext, liked.Action.Kind);
+            Assert.Equal("spotify:user:u1:collection", liked.Action.ContextUri);
+
+            Assert.Equal("My Playlists", s.ResultsSections[1].Label);
+        }
+
+        // ผู้เรียกหา user id ไม่ได้ (โหลด /me พลาด) -> ซ่อนแถวไปเลย ดีกว่ากดแล้วเงียบ
+        [Fact]
+        public void MyPlaylistsArrived_NoLikedSongsUri_HidesTheRow()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            vm.MyListsClicked();
+            PanelState s = vm.MyPlaylistsArrived(
+                new List<UserPlaylistInfo> { new UserPlaylistInfo { Id = "p1", Name = "Mix" } }, null);
+
+            Assert.Single(s.ResultsSections); // ไม่มี "Library" section เลย
+            Assert.Equal("My Playlists", s.ResultsSections[0].Label);
+        }
+
+        // /me/playlists พังไม่ควรทำให้ Liked Songs หายไปด้วย - คนละ section กันด้วยเหตุผลนี้
+        [Fact]
+        public void MyPlaylistsArrived_LikedSongsSurvivesPlaylistLoadFailure()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            vm.MyListsClicked();
+            PanelState s = vm.MyPlaylistsArrived(null, "spotify:user:u1:collection");
+
+            Assert.Equal("Liked Songs", s.ResultsSections[0].Rows[0].Title);
+            Assert.Equal("Failed to load playlists, try again", s.ResultsSections[1].Message);
+        }
+
+        // ปิด My Lists แล้วเปิดใหม่โดยไม่ได้ liked songs uri มาด้วยรอบนี้ - แถวเก่าต้องไม่ค้าง
+        [Fact]
+        public void MyPlaylistsArrived_ReopenWithoutUri_DropsStaleLikedSongsRow()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            vm.MyListsClicked();
+            vm.MyPlaylistsArrived(
+                new List<UserPlaylistInfo> { new UserPlaylistInfo { Id = "p1", Name = "Mix" } },
+                "spotify:user:u1:collection");
+
+            vm.MyListsClicked(); // หุบ
+            vm.MyListsClicked(); // เปิดใหม่
+            PanelState s = vm.MyPlaylistsArrived(
+                new List<UserPlaylistInfo> { new UserPlaylistInfo { Id = "p1", Name = "Mix" } }, null);
+
+            Assert.Single(s.ResultsSections);
+            Assert.Equal("My Playlists", s.ResultsSections[0].Label);
         }
 
         // === ไฮไลต์แถวที่เพิ่งกด ===
@@ -1002,13 +1071,13 @@ namespace ChillWithYou_SpotifyMod.Tests
             var vm = new PanelViewModel();
             vm.ResetForInject(loggedIn: true);
 
-            vm.MyPlaylistsArrived(null);
+            vm.MyPlaylistsArrived(null, null);
             Assert.Equal("Failed to load playlists, try again", Section(vm.Current, "My Playlists").Message);
             Assert.Equal(ResultsMode.MyPlaylists, vm.Current.ResultsMode); // กดซ้ำแล้วหุบ error ได้
 
             vm.MyListsClicked(); // หุบ
             vm.MyListsClicked(); // ขอใหม่
-            vm.MyPlaylistsArrived(new List<UserPlaylistInfo>());
+            vm.MyPlaylistsArrived(new List<UserPlaylistInfo>(), null);
             Assert.Equal("No playlists in this account", Section(vm.Current, "My Playlists").Message);
         }
 
@@ -1020,7 +1089,7 @@ namespace ChillWithYou_SpotifyMod.Tests
             var vm = new PanelViewModel();
             vm.ResetForInject(loggedIn: true);
             vm.MyListsClicked();
-            vm.MyPlaylistsArrived(new List<UserPlaylistInfo> { new UserPlaylistInfo { Id = "p", Name = "L", TrackCount = 1 } });
+            vm.MyPlaylistsArrived(new List<UserPlaylistInfo> { new UserPlaylistInfo { Id = "p", Name = "L", TrackCount = 1 } }, null);
 
             PanelState s = vm.SearchCleared();
 

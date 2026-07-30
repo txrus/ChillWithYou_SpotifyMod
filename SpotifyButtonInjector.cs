@@ -1049,7 +1049,14 @@ namespace ChillWithYou_SpotifyMod
 
             System.Collections.Generic.List<UserPlaylistInfo> playlists =
                 await SpotifyWebApi.GetMyPlaylistsAsync(limit: 20);
-            Plugin.RunOnMainThread(() => Apply(_vm.MyPlaylistsArrived(playlists)));
+
+            // Liked Songs ไม่ใช่ playlist ที่มี id ปกติ - ต้องประกอบ context uri เองจาก user id
+            // (แคชไว้ทั้ง session ตั้งแต่ครั้งแรกที่รู้ ไม่ว่าจะมาจาก resume session ตอนเปิดเกม
+            // หรือกด Connect ระหว่างเล่น) null = หาไม่ได้ -> VM ซ่อนแถวนี้ไปเลย
+            string userId = await SpotifyApi.GetCurrentUserIdAsync();
+            string likedSongsContextUri = userId != null ? $"spotify:user:{userId}:collection" : null;
+
+            Plugin.RunOnMainThread(() => Apply(_vm.MyPlaylistsArrived(playlists, likedSongsContextUri)));
         }
 
         // toggle รายการอุปกรณ์ที่ Spotify มองเห็น - โครงเดียวกับปุ่ม My Lists ทุกประการ

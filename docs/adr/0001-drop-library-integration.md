@@ -35,3 +35,17 @@ a "LIKED SONGS" header with non-clickable rows.
 - The `RunOptimistic` helper and `SpotifyGatewayPolicy` module introduced alongside the
   original library work stayed — they're used by shuffle/repeat and the whole gateway
   respectively, independent of the library feature that motivated writing them.
+
+## Addendum: playing Liked Songs is not the same as reading it
+
+*Added after a follow-up request to "add Liked Songs to My Lists."*
+
+The restriction above is specifically on the `/me/tracks` family — reading or writing the
+saved-tracks list. It says nothing about **playing** the collection: `PUT /me/player/play`
+with `context_uri: "spotify:user:{id}:collection"` is a playback-endpoint call, not a library
+call, and isn't part of the blocked family. A "Liked Songs" row was added to My Lists that
+does exactly this — plays the collection from the top, the same way a playlist row does —
+without ever touching `/me/tracks`. It can't show a track count or thumbnail up front
+(nothing was listed to get one from), and once playing, track *browsing* still goes through
+the existing collection-context queue fallback this ADR already describes, not a new listing
+call. This doesn't reopen the decision above; it's a different endpoint entirely.

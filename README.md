@@ -124,7 +124,7 @@ The app you created above runs in **Development Mode**, where Spotify has remove
 | Open Daily Mix / Discover Weekly / "This Is ..." | Spotify-owned playlists, no longer readable through the API (Nov 2024) |
 | See an artist's playlists | This endpoint never existed — playlists belong to a *user*, not an artist |
 | More than 10 search results per category | The `limit` cap dropped from 50 to 10 (Feb 2026) — the mod already uses 5 |
-| Save/like a song, or browse Liked Songs directly | The `/me/tracks` endpoint family returns `403` in Development Mode even with the correct scopes granted — tried and confirmed, see [ADR 0001](docs/adr/0001-drop-library-integration.md). Liked Songs still shows up in the queue if you start it from the Spotify app itself |
+| Save/like a song, or browse the full list of your Liked Songs | The `/me/tracks` endpoint family returns `403` in Development Mode even with the correct scopes granted — tried and confirmed, see [ADR 0001](docs/adr/0001-drop-library-integration.md). You can still play Liked Songs from My Lists in the panel — it just can't be browsed track-by-track before you do |
 
 What **still works normally**: playback control (play/pause/next/prev), search, your own playlists, and now-playing info.
 
@@ -154,7 +154,7 @@ This mod was made to learn, and almost everything about it was learned from othe
 
 See the per-version history in [CHANGELOG.md](CHANGELOG.md).
 
-Latest version **v1.4.0** — shuffle and repeat toggle right from the panel (with a tooltip so the small icons are readable), a volume slider sits next to the transport buttons, and a Devices button lets you switch playback to another device without leaving the game. Hovering the progress bar previews the time you're about to seek to before you click. Long playlists no longer lose track of what's playing once you're past the first 21 songs.
+Latest version **v1.4.0** — shuffle and repeat toggle right from the panel (with a tooltip so the small icons are readable), a volume slider sits next to the transport buttons, and a Devices button lets you switch playback to another device without leaving the game. Hovering the progress bar previews the time you're about to seek to before you click. Long playlists no longer lose track of what's playing once you're past the first 21 songs. My Lists also gets a Liked Songs row that plays your saved tracks from the top.
 
 v1.3.0 — the panel keeps up with whatever else is driving Spotify: skip, pause or seek from your phone and the game follows within a few seconds, but only while the panel is actually open. You can also drag the progress bar to seek from inside the game.
 

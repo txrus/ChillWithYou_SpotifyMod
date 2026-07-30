@@ -168,6 +168,11 @@ namespace ChillWithYou_SpotifyMod
         // รายชื่อ playlist ของ user ชุดล่าสุด - เหตุผลเดียวกับ _lastSearchResults (กาง/หุบต้องประกอบใหม่)
         private List<UserPlaylistInfo> _lastMyPlaylists;
 
+        // context uri ของคลังเพลง ("spotify:user:{id}:collection") - ผู้เรียกหามาให้ตอนกด My Lists
+        // เพราะ VM ยิง API เองไม่ได้ (ต้องรู้ user id ก่อนถึงจะสร้าง uri นี้ได้)
+        // null = หา user id ไม่ได้ -> ซ่อนแถว Liked Songs ไปเลย
+        private string _likedSongsContextUri;
+
         // รายการอุปกรณ์ชุดล่าสุดที่ดึงมา - เหตุผลเดียวกับสองตัวบน
         private List<SpotifyDeviceInfo> _lastDevices;
 
@@ -197,6 +202,7 @@ namespace ChillWithYou_SpotifyMod
             _lastSearchResults = null;
             _lastMyPlaylists = null;
             _lastDevices = null;
+            _likedSongsContextUri = null;
             CollapseArtist();
             return Current;
         }
@@ -401,6 +407,7 @@ namespace ChillWithYou_SpotifyMod
             _lastSearchResults = results;
             _lastMyPlaylists = null;
             _lastDevices = null;
+            _likedSongsContextUri = null;
             CollapseArtist(); // ผลชุดใหม่แล้ว - อัลบั้มที่กางค้างจากคำค้นก่อนไม่เกี่ยวกันแล้ว
             Current.SelectedRowKey = null;
             Current.ResultsSections = new List<PanelSection>();
@@ -576,6 +583,21 @@ namespace ChillWithYou_SpotifyMod
         // development mode เลยถอดออก - เล่น Liked Songs จากแอปแล้วแผงจะโชว์คิวให้แทน
         private void BuildMyPlaylistSection()
         {
+            // คลังเพลงขึ้นก่อน: เป็นของที่คนเปิดดูบ่อยสุดและไม่ได้อยู่ใน /me/playlists เลย
+            // แยก section ของตัวเองเพื่อให้ยังโผล่แม้ /me/playlists จะโหลดพลาด (section นั้นจะกลาย
+            // เป็นข้อความ error ทั้งก้อน ถ้าเอาแถวนี้ไปรวมก็จะหายไปด้วย)
+            // ไม่มี context uri (โหลด user id พลาด) -> ไม่โผล่ปุ่มเลย ดีกว่ากดแล้วเงียบ
+            if (_likedSongsContextUri != null)
+            {
+                NewSection("Library").Rows.Add(new PanelRow
+                {
+                    Title = "Liked Songs",
+                    Sub = "Songs you saved",
+                    Key = LikedKey,
+                    Action = RowAction.PlayContext(_likedSongsContextUri),
+                });
+            }
+
             var section = NewSection("My Playlists");
             if (_lastMyPlaylists == null || _lastMyPlaylists.Count == 0)
             {
@@ -671,6 +693,7 @@ namespace ChillWithYou_SpotifyMod
             if (Current.ResultsMode == ResultsMode.MyPlaylists)
             {
                 _lastMyPlaylists = null;
+                _likedSongsContextUri = null;
                 Current.ResultsMode = ResultsMode.Empty;
                 Current.ResultsSections = new List<PanelSection>();
                 Current.ResultsRevision++;
@@ -683,9 +706,11 @@ namespace ChillWithYou_SpotifyMod
         }
 
         // รายชื่อ playlist ของ user มาถึง (null = โหลดพลาด) - โชว์ในพื้นที่ผลลัพธ์
-        public PanelState MyPlaylistsArrived(List<UserPlaylistInfo> playlists)
+        // likedSongsContextUri: null = หา user id ไม่ได้ -> ซ่อนแถว Liked Songs (ดู BuildMyPlaylistSection)
+        public PanelState MyPlaylistsArrived(List<UserPlaylistInfo> playlists, string likedSongsContextUri)
         {
             _lastMyPlaylists = playlists;
+            _likedSongsContextUri = likedSongsContextUri;
             // นับเป็นโหมด My Lists แม้โหลดพลาด - กดปุ่มซ้ำจะได้หุบข้อความ error ได้เหมือนรายการปกติ
             Current.ResultsMode = ResultsMode.MyPlaylists;
             RebuildResults();
@@ -699,6 +724,7 @@ namespace ChillWithYou_SpotifyMod
         {
             _lastSearchResults = null;
             _lastMyPlaylists = null;
+            _likedSongsContextUri = null;
             CollapseArtist();
             Current.SelectedRowKey = null;
 
@@ -739,6 +765,7 @@ namespace ChillWithYou_SpotifyMod
             _lastSearchResults = null;
             _lastMyPlaylists = null;
             _lastDevices = null;
+            _likedSongsContextUri = null;
             CollapseArtist();
             Current.SelectedRowKey = null;
             Current.ResultsMode = ResultsMode.Empty;
@@ -756,6 +783,7 @@ namespace ChillWithYou_SpotifyMod
         private static string ArtistKey(string id) => id != null ? "artist:" + id : null;
         private static string PlaylistKey(string id) => id != null ? "playlist:" + id : null;
         private static string DeviceKey(string id) => id != null ? "device:" + id : null;
+        private const string LikedKey = "liked";
 
         private PanelSection NewSection(string label)
         {

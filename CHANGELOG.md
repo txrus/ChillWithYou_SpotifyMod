@@ -12,6 +12,19 @@ minor version for the same reason 1.2.0 and 1.3.0 were: real new player-facing c
 not just bug fixes.
 
 ### Added
+- **A "Liked Songs" row in My Lists** that plays your saved tracks, right above your
+  playlists. This isn't the same feature that got pulled below for hitting a 403 - that one
+  tried to *list* the tracks via `/me/tracks`, which is blocked. This one just sends
+  `spotify:user:{id}:collection` as a `context_uri` to the same `/me/player/play` endpoint
+  every other row already uses, so it never touches the blocked endpoint at all. Once
+  playing, the existing collection-context fallback (also in this release, used for artist
+  and album radio too) takes over and shows the queue labeled "LIKED SONGS".
+  - The context URI needs your Spotify user ID, which the mod fetches once via `GET /me` and
+    caches for the session (reusing the same call `LogCurrentUser` already made at startup,
+    if a session was resumed there).
+  - If the ID can't be fetched, the row is hidden entirely rather than shown and failing
+    silently when tapped.
+  - Lives in its own small section, so a `/me/playlists` failure can't take it down with it.
 - **Shuffle and repeat buttons** in the controls row, arranged the same way the Spotify app
   does (shuffle - prev - play - next - repeat), so the play button stays centered since one
   button was added on each side.
