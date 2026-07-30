@@ -320,7 +320,7 @@ namespace ChillWithYou_SpotifyMod
                 // เหลือผิดพลาดแล้วยืดแถบเกินขอบเขตที่กันไว้ให้ตัวเลข
                 LayoutElement volumeSliderLe = _volumeSlider.GetComponent<LayoutElement>();
                 volumeSliderLe.flexibleWidth = 0f;
-                volumeSliderLe.preferredWidth = 52f;
+                volumeSliderLe.preferredWidth = 60f;
                 // ต่างจากแถบ progress ที่เปิด/ปิดตามว่ามีเพลงไหม - ทั้งกล่องนี้ซ่อนอยู่แล้วเมื่อสั่งเสียงไม่ได้
                 _volumeSlider.interactable = true;
                 _volumeSlider.onValueChanged.AddListener(OnVolumeSliderChanged);
