@@ -51,6 +51,25 @@ namespace ChillWithYou_SpotifyMod.Tests
             Assert.Equal("p1", plan.PlaylistId);
         }
 
+        // /playlists/{id} คืนลำดับเพลงตายตัวเสมอ ไม่ขยับตาม shuffle เลย - ผู้เรียก (SpotifyWebApi)
+        // ต้องรู้ค่านี้เพื่อสลับไปใช้ /me/player/queue แทนตอน shuffle เปิด ไม่งั้นคิวจะไม่มีวันตรงกับ
+        // ลำดับที่ Spotify กำลังเล่นจริง (บั๊กจริง: "กด shuffle แล้วคิวไม่อัปเดต")
+        [Fact]
+        public void Plan_PlaylistContext_CarriesShuffleState()
+        {
+            var c = new RefreshCoordinator();
+            SpotifyNowPlayingInfo shuffled = PlaylistTrack();
+            shuffled.ShuffleOn = true;
+
+            Assert.True(c.PlanContextFetch(shuffled, loggedIn: true).ShuffleOn);
+
+            var c2 = new RefreshCoordinator();
+            SpotifyNowPlayingInfo notShuffled = PlaylistTrack();
+            notShuffled.ShuffleOn = false;
+
+            Assert.False(c2.PlanContextFetch(notShuffled, loggedIn: true).ShuffleOn);
+        }
+
         // album: อ่าน track list ของ context ตรงๆ ไม่ได้ (dev mode) -> ใช้คิว และยืมปกเพลงที่เล่นอยู่
         [Fact]
         public void Plan_AlbumContext_QueueFetchWithCover()
@@ -74,6 +93,20 @@ namespace ChillWithYou_SpotifyMod.Tests
 
             Assert.Equal(ContextFetchKind.Queue, plan.Kind);
             Assert.Null(plan.CoverBytes);
+        }
+
+        // Liked Songs (collection): อ่าน /me/tracks ตรงๆ โดน 403 ใน dev mode -> ใช้คิวแทน
+        // header ต้องบอกว่าเป็น Liked Songs ไม่ใช่ชื่อศิลปินของเพลงที่บังเอิญเล่นอยู่
+        [Fact]
+        public void Plan_CollectionContext_QueueFetchNamedLikedSongs()
+        {
+            var c = new RefreshCoordinator();
+            ContextFetchPlan plan = c.PlanContextFetch(
+                ContextTrack("spotify:user:12345:collection"), loggedIn: true);
+
+            Assert.Equal(ContextFetchKind.Queue, plan.Kind);
+            Assert.Equal("Liked Songs", plan.DisplayName);
+            Assert.Null(plan.CoverBytes); // ปกเปลี่ยนตามเพลง ใช้เป็นปก header ไม่ได้
         }
 
         // เลิกเล่นจาก context (เช่นสลับไปเพลงเดี่ยว) ทั้งที่เคยจำ context เก่าไว้ -> ต้องสั่งโหลด

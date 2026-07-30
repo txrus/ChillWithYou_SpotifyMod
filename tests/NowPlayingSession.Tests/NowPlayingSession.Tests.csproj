@@ -22,6 +22,7 @@
     <Compile Include="..\..\SpotifyModels.cs" Link="SpotifyModels.cs" />
     <Compile Include="..\..\PanelViewModel.cs" Link="PanelViewModel.cs" />
     <Compile Include="..\..\RefreshCoordinator.cs" Link="RefreshCoordinator.cs" />
+    <Compile Include="..\..\SpotifyGatewayPolicy.cs" Link="SpotifyGatewayPolicy.cs" />
   </ItemGroup>
 
 </Project>

@@ -1,8 +1,8 @@
 // SpotifyApi.cs
 // เวอร์ชัน Web API ล้วน (ถอด SMTC ออกทั้งหมด เพราะ Mono ไม่รองรับ WinRT)
 // ต้อง login ผ่าน SpotifyAuth ก่อนถึงจะใช้ปุ่มควบคุมได้ทุกปุ่ม
-// ตัด shuffle/repeat ออกตามที่ตกลงกัน + แก้ปัญหา "Restriction violated" ตอนสั่ง play
-// ด้วยการระบุ device_id ให้ชัดเจนทุกครั้ง (ไม่งั้น Spotify บางทีงงว่าจะสั่ง play ที่ไหน)
+// แก้ปัญหา "Restriction violated" ตอนสั่ง play ด้วยการระบุ device_id ให้ชัดเจนทุกครั้ง
+// (ไม่งั้น Spotify บางทีงงว่าจะสั่ง play ที่ไหน)
 //
 // envelope ของการยิง request (token/bearer/429/retry/log) ย้ายไป SpotifyGateway แล้ว
 // ไฟล์นี้เหลือหน้าที่แค่ประกอบ path + parse JSON ของ now-playing
@@ -59,6 +59,35 @@ namespace ChillWithYou_SpotifyMod
 
         private static string DeviceQuery(string prefix) =>
             string.IsNullOrEmpty(_lastKnownDeviceId) ? "" : $"{prefix}device_id={_lastKnownDeviceId}";
+
+        // ตั้งระดับเสียงของอุปกรณ์ที่เล่นอยู่ (PUT /me/player/volume) - ใช้ scope
+        // user-modify-playback-state ตัวเดียวกับปุ่ม play/pause ที่มีอยู่แล้ว
+        // query มี volume_percent อยู่แล้ว device_id จึงต่อท้ายด้วย & ไม่ใช่ ?
+        public static Task<bool> SetVolume(int percent) =>
+            SpotifyGateway.SendAsync(HttpMethod.Put,
+                $"me/player/volume?volume_percent={Math.Min(100, Math.Max(0, percent))}" + DeviceQuery("&"));
+
+        // สลับสุ่มเพลง / โหมดเล่นซ้ำ (PUT /me/player/shuffle, /me/player/repeat)
+        // ใช้ scope user-modify-playback-state ตัวเดียวกับปุ่ม play/pause ที่มีอยู่แล้ว
+        // query มี state อยู่แล้ว device_id จึงต่อท้ายด้วย & ไม่ใช่ ?
+        public static Task<bool> SetShuffle(bool on) =>
+            SpotifyGateway.SendAsync(HttpMethod.Put,
+                $"me/player/shuffle?state={(on ? "true" : "false")}" + DeviceQuery("&"));
+
+        public static Task<bool> SetRepeat(RepeatMode mode) =>
+            SpotifyGateway.SendAsync(HttpMethod.Put,
+                $"me/player/repeat?state={RepeatToApi(mode)}" + DeviceQuery("&"));
+
+        // การแปลง RepeatMode <-> ค่าสตริงบน wire อยู่ที่นี่ตามกติกาของ SpotifyModels.cs
+        // (DTO ห้ามรู้จัก wire format - ฝั่งโมเดลเหลือแค่ Next() ที่เป็นกฎ UI ล้วน)
+        private static string RepeatToApi(RepeatMode mode) =>
+            mode == RepeatMode.Track ? "track" :
+            mode == RepeatMode.Context ? "context" : "off";
+
+        private static RepeatMode ParseRepeat(string apiValue) =>
+            apiValue == "track" ? RepeatMode.Track :
+            apiValue == "context" ? RepeatMode.Context :
+            RepeatMode.Off; // รวมถึงกรณีไม่มีค่ามาเลย
 
         // === เลือกอุปกรณ์ที่จะให้เล่น ===
 
@@ -198,6 +227,12 @@ namespace ChillWithYou_SpotifyMod
 
                 return new SpotifyNowPlayingInfo
                 {
+                    VolumePercent = (int?)device?["volume_percent"],
+                    // Spotify เพิ่ง field นี้มาทีหลัง - response เก่า/อุปกรณ์บางตัวไม่ส่งมาเลย
+                    // ถือว่าสั่งได้ไว้ก่อนถ้ามีระดับเสียงรายงานมา (ไม่งั้นแถบเสียงจะไม่โผล่ให้ใครเลย)
+                    SupportsVolume = (bool?)device?["supports_volume"] ?? device?["volume_percent"] != null,
+                    ShuffleOn = (bool?)obj["shuffle_state"] ?? false,
+                    RepeatMode = ParseRepeat((string)obj["repeat_state"]),
                     TrackId = (string)item["id"],
                     Title = (string)item["name"],
                     Artist = artist,

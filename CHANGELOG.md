@@ -1,161 +1,275 @@
 # Changelog
 
-รูปแบบอิงตาม [Keep a Changelog](https://keepachangelog.com/) และใช้ [Semantic Versioning](https://semver.org/)
+Format follows [Keep a Changelog](https://keepachangelog.com/) and uses [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
 ### Added
-- เอาเมาส์ไปชี้ที่ progress bar แล้วมีป้ายเวลาลอยขึ้นมาเหนือแถบ บอกว่าถ้ากดตรงนั้นจะไป
-  วินาทีที่เท่าไหร่ - เดิมต้องกดลงไปก่อนถึงจะรู้ (ตัวเลขซ้ายมือเปลี่ยนตอนลากแล้วเท่านั้น)
-  ป้ายวิ่งตามเมาส์ ไม่ล้นออกนอกปลายแถบทั้งสองข้าง และระหว่างลากจะโชว์ค่าเดียวกับที่จะสั่ง
-  seek จริง (`slider.value`) ไม่ใช่ตำแหน่งเมาส์ดิบๆ ป้ายจึงไม่บอกคนละเวลากับปลายทาง
-  (uGUI ไม่มี event ตอนเมาส์ขยับ - ใช้ pointer enter/exit คุมการโผล่ แล้วอ่าน
-  `Input.mousePosition` เองเฉพาะเฟรมที่เมาส์อยู่บนแถบจริงๆ)
-- ปุ่ม **Devices** ข้างปุ่ม My Lists: กดแล้วเห็นรายการอุปกรณ์ที่ Spotify มองเห็นอยู่
-  (`GET /me/player/devices`) กดที่แถวไหนคือย้ายการเล่นไปเครื่องนั้น (`PUT /me/player`)
-  แก้เคสที่กดปุ่มในเกมแล้วเงียบเพราะ Spotify ไม่มี active device อยู่เลย - เดิมต้องออกไป
-  เปิดแอป Spotify กดเล่นสักทีก่อนถึงจะสั่งจากในเกมได้
-  - เครื่องที่กำลังเล่นอยู่ทาเขียวไว้และกดไม่ได้ (ย้ายไปตัวเองไม่มีความหมาย)
-  - เครื่องที่ `is_restricted` กดไม่ได้และบอกเหตุผลที่บรรทัดรอง ดีกว่าปล่อยให้กดแล้วเงียบ
-  - ส่งสถานะเล่น/หยุดปัจจุบันไปกับคำสั่งย้าย (`play`) - หยุดเพลงไว้แล้วสลับเครื่องจะไม่โดน
-    บังคับให้เพลงเล่นขึ้นมาเอง
-  - ย้ายสำเร็จแล้วจำ device id ใหม่ทันที คำสั่ง play/pause/next/seek ถัดไปลงเครื่องใหม่เลย
-    ไม่ต้องรอ poll รอบหน้า
-  - ไม่ cache รายการเลย (ต่างจาก My Lists) เพราะอุปกรณ์เปิด/ปิดตลอดเวลา กดดูทีไรต้องเป็นของจริง
-  - ใช้ scope `user-read-playback-state` / `user-modify-playback-state` ที่ขอไว้อยู่แล้ว
-    ผู้ใช้เดิมไม่ต้อง Connect ใหม่
+- **Shuffle and repeat buttons** in the controls row, arranged the same way the Spotify app
+  does (shuffle - prev - play - next - repeat), so the play button stays centered since one
+  button was added on each side.
+  - Shuffle is a plain on/off toggle. Repeat cycles one step per press: off → repeat all
+    (`↻`) → repeat one (`↻1`) → off.
+  - Dim = off, green = on, and both flip instantly without waiting for Spotify to respond
+    (reverting if the command fails, e.g. a Free account or no active device) - the same
+    pattern the play/pause button already uses.
+  - Real state comes from `shuffle_state` / `repeat_state` on the `/me/player` response the
+    mod already polls - no extra endpoint. Toggle shuffle from your phone and the in-game
+    panel catches up within 6 seconds.
+  - **After a successful shuffle toggle, the on-screen queue is refetched** to match. For
+    playlists specifically this needed more than a refetch: `/playlists/{id}` always returns
+    the playlist's fixed, saved order and has no idea shuffle exists, so no amount of
+    refreshing that endpoint could ever show the shuffled order. When shuffle is on, the
+    queue for a playlist is now sourced from `/me/player/queue` instead (the same live,
+    actually-playing order already used for artist/album radio), while the header still keeps
+    the real playlist name and cover.
+  - Hovering either button now shows a small "Shuffle" / "Repeat" tooltip above it, since the
+    icons alone are too small to read at a glance.
+- **Volume slider**, in the corner of the controls row (`PUT /me/player/volume`, the last 20%
+  of the row's width) rather than its own line. Drag-and-release sends the command once, like
+  seek; the percentage follows your finger while dragging, and polled values never overwrite
+  the slider mid-drag. Hidden entirely when the device can't take volume commands through the
+  Web API (`supports_volume`) - a slider that does nothing is more confusing than no slider.
+  Uses the existing scope - no reconnect needed. The bar and its "100%" label both use fixed
+  pixel widths rather than one flexible one competing for space with the other, after the
+  flexible version rendered with the two overlapping in game.
+- **Devices button** next to My Lists: shows every device Spotify currently sees
+  (`GET /me/player/devices`); tapping a row transfers playback there (`PUT /me/player`). This
+  is the fix for the classic "pressed a button in game and nothing happened" case, caused by
+  Spotify having no active device at all - previously you had to open the Spotify app and hit
+  play once before the in-game panel could control anything.
+  - The device currently playing is shown in green and can't be tapped (transferring to
+    itself is meaningless).
+  - A device marked `is_restricted` can't be tapped either, with the reason shown on its
+    sub-line rather than letting the tap fail silently.
+  - The current play/pause state is sent along with the transfer (`play`) - pausing, then
+    switching devices, won't force playback to start.
+  - On a successful transfer the new device id is remembered immediately, so the very next
+    play/pause/next/seek lands on the new device without waiting for the next poll.
+  - Never cached, unlike My Lists - devices come and go constantly, so every open of the list
+    is a fresh fetch.
+  - Uses the existing `user-read-playback-state` / `user-modify-playback-state` scopes - no
+    reconnect needed.
+- **Hover the progress bar to see the seek time** floating above it before you click - you
+  used to have to press down first to find out (the time on the left only updated once you
+  were already dragging). The label follows the cursor, never overflows past either end of the
+  bar, and while dragging it shows the same value that will actually be sent
+  (`slider.value`), not the raw cursor position, so it never claims a different time than
+  where the seek will land. (uGUI has no "mouse moved" event, so pointer enter/exit gate
+  whether the label shows, and `Input.mousePosition` is only read on frames the cursor is
+  actually over the bar.)
 
 ### Fixed
-- แก้เพลงหายจากคิวเมื่อเล่นเลยแถวสุดท้ายที่ดึงมาได้: คิวบนจอมีได้สูงสุด 21 เพลง พอเพลย์ลิสต์
-  เดินไปถึงเพลงที่ 22 เพลงที่เล่นอยู่ก็ไม่มีในลิสต์อีก ไม่มีแถวไหนถูกไฮไลต์ และไม่มีอะไรมาอัปเดต
-  ให้เลยจนกว่าจะเปลี่ยนเพลย์ลิสต์ ตอนนี้รอบ poll ที่เห็นว่าเพลงที่เล่นอยู่หลุดจากแถวบนจอไปแล้ว
-  (แต่ยังเป็น context เดิม) จะดึงคิวช่วงถัดไปจาก `/me/player/queue` มาแทนเฉพาะแถวเพลง
-  ส่วน header (ชื่อ/ปกเพลย์ลิสต์) คงเดิม - endpoint นี้เริ่มนับจากเพลงที่กำลังเล่นเสมอ เพลงที่เล่นอยู่
-  จึงขึ้นแถวแรกและกดเล่นแถวถัดๆ ไปได้ตามปกติ (`RefreshCoordinator.PlanQueueSlide`)
-  ยิงได้เพลงละครั้งเดียวเพื่อไม่ให้วนขอทุกรอบ poll และไม่เลื่อนทับรายชื่อเพลงของอัลบั้ม
-  ที่ผู้ใช้กดจากผลค้นหามาดูอยู่
+- **Fixed tracks disappearing from the queue once playback passes the last row fetched.** The
+  on-screen queue holds at most 21 tracks; once a playlist reached track 22, the playing song
+  no longer appeared in the list at all - nothing was highlighted, and nothing refreshed until
+  the playlist changed. Now, the poll cycle that notices the playing track has fallen off the
+  displayed rows (while still in the same context) fetches the next window from
+  `/me/player/queue` and replaces just the track rows - the header (playlist name/cover)
+  stays put, since this endpoint always starts counting from the currently playing track, so
+  it lands on row 1 and the following rows are clickable as usual
+  (`RefreshCoordinator.PlanQueueSlide`). Fires at most once per track to avoid asking again on
+  every poll, and never overwrites an album's track list that the player opened from search
+  results.
+- **Fixed shuffle not actually changing the on-screen queue.** Toggling shuffle cleared the
+  refresh coordinator's own memory of what was loaded, but not `SpotifyWebApi`'s separate
+  playlist cache, which remembers a fetch result keyed only by playlist id - with no idea
+  shuffle exists. The very next fetch after toggling shuffle silently returned that stale,
+  pre-toggle cache entry instead of hitting the network at all. Toggling shuffle now clears
+  both caches, the same two calls the header's ↻ button already made.
+
+### Changed
+- Internal cleanup from an architecture review (no visible change to players):
+  - The optimistic apply-then-revert shape used by the shuffle/repeat buttons (change the
+    display immediately, send the command, revert only on failure) is now one shared
+    `RunOptimistic` helper instead of duplicated per button, with a single documented table of
+    which commands revert on failure and which let the next poll correct them instead
+    (volume and seek fall in that second group).
+  - The network layer's decisions (retrying a transient 401/403, reporting a 429, picking the
+    right image size) moved into `SpotifyGatewayPolicy`, plain logic with no dependency on
+    `HttpResponseMessage` - now covered by 15 unit tests that previously had no way to run at
+    all.
+  - Repeat-mode wire mapping (`"track"`/`"context"`/`"off"`) moved out of the DTO file and into
+    `SpotifyApi`, per that file's own rule that DTOs shouldn't know about wire formats.
+
+### Removed
+- **The save-song heart button and the direct Liked Songs listing.** Both used the
+  `/me/tracks` endpoint family, which returns `403` in development mode even with the correct
+  scopes granted - there was no way to make it work, so it's been pulled out rather than left
+  half-broken. The `user-library-read` / `user-library-modify` scopes requested for it are
+  gone too; no one needs to reconnect over this.
+  - **Liked Songs is still viewable from in-game** when you start it from the Spotify app: the
+    panel recognizes the `spotify:user:*:collection` context and displays it through the
+    regular queue mechanism (the same fallback already used for artist and album radio),
+    labeled "LIKED SONGS" in the header - it just can't be browsed or launched from inside
+    the mod anymore.
+- **Search within the loaded playlist/queue**, added earlier in this same unreleased cycle
+  and removed again before shipping: it only ever searched the up-to-21 tracks already
+  fetched, never the whole playlist, so a track that wasn't found looked like it wasn't in
+  the playlist at all when it might simply be outside the loaded window - actively misleading
+  rather than merely limited.
+- **Queue pagination**, also added and removed within this cycle: didn't work as intended
+  once tested in game. The queue goes back to showing every loaded track (up to 21) in a
+  single scrollable list, same as before pagination was tried.
 
 ## [1.3.0] - 2026-07-25
 
 ### Added
-- ลาก (หรือกด) progress bar ในเกมเพื่อ seek ได้แล้ว - ส่ง `PUT /me/player/seek` ครั้งเดียว
-  ตอนปล่อยนิ้ว ไม่ใช่ทุกเฟรมที่ลาก และขยับนาฬิกาในเครื่องทันทีไม่ต้องรอ Spotify ตอบ บาร์จึง
-  ไม่เด้งกลับจุดเดิมชั่วครู่ (คำสั่งพลาดก็มี poll รอบถัดไปแก้ค่าให้เองใน 6 วิ)
-  ระหว่างลาก ตัวเลขเวลาซ้ายมือวิ่งตามตำแหน่งที่ลากถึง และ hot path หยุดเขียนทับค่า slider
-  พื้นที่กดของแถบสูงขึ้นเป็น 16px (แถบที่เห็นยังหนา 6px เท่าเดิม) ให้จิ้มโดนง่าย
-  ลากได้เฉพาะตอนมีเพลงอยู่จริง
+- The in-game progress bar can now be dragged (or clicked) to seek - sends a single
+  `PUT /me/player/seek` on release, not on every frame of the drag, and moves the local clock
+  immediately instead of waiting for Spotify to respond, so the bar doesn't snap back
+  momentarily (a failed command still gets corrected by the next poll within 6 seconds).
+  While dragging, the time on the left follows the drag position, and the hot path stops
+  overwriting the slider value. The bar's hit area grew to 16px (the visible bar is still
+  6px) so it's easier to land a tap on. Dragging only works while a track is actually playing.
 
 ### Fixed
-- แก้แผงในเกมไม่ตามเวลาสั่งเพลงจากที่อื่น (มือถือ / แอป Spotify บนเครื่อง): เดิมมอดรู้ว่าเพลง
-  เปลี่ยนได้ 3 ทางคือกดปุ่มในเกม, นาฬิกาในเครื่องนับจนเพลงจบ, และ alt-tab กลับเข้าเกม -
-  ซึ่งพลาดเคสที่ผู้เล่นอยู่ในเกมทั้งหมดแล้วหยิบมือถือมากดข้ามเพลง (ไม่มี event ไหนเกิดเลย
-  แผงจึงค้างอยู่กับเพลงเก่า) ตอนนี้ poll ทุก 6 วิ **เฉพาะตอนแผงเปิดอยู่จริง** - ปิดเมนูแล้ว
-  หยุดยิงทันที และการ refresh ทางอื่นเลื่อนรอบ poll ถัดไปออกไปเอง ไม่ยิงซ้อนกัน
-  (`RefreshCoordinator.ShouldPollNowPlaying` + กันยิงซ้อนเมื่อ request ก่อนหน้าช้ากว่าคาบ)
-- ลด log ท่วมจากการ poll: บรรทัด `RefreshNowPlaying` เขียนเฉพาะตอนเพลงที่เห็นเปลี่ยนไป
-  จากรอบก่อน (เดิมเขียนทุกครั้งที่ยิง ซึ่งตอนนี้คือทุก 6 วิ)
+- Fixed the in-game panel not following songs played from elsewhere (phone / the desktop
+  Spotify app): the mod previously only learned about track changes through three paths -
+  pressing a button in-game, the local clock counting down to the end of a track, and
+  alt-tabbing back into the game - which missed the case of a player who stayed in-game the
+  whole time and skipped a track from their phone (no event fired at all, so the panel sat on
+  the stale track). It now polls every 6 seconds, but **only while the panel is actually
+  open** - closing the menu stops the polling immediately, and any other kind of refresh
+  (button press, track ending, alt-tab) pushes the next poll out on its own rather than firing
+  on top of it (`RefreshCoordinator.ShouldPollNowPlaying`, plus a guard against overlapping
+  requests when one poll runs long).
+- Reduced log spam from polling: the `RefreshNowPlaying` log line now only writes when the
+  observed track actually changes from the previous check (it used to write on every fetch,
+  which is now every 6 seconds).
 
 ## [1.2.0] - 2026-07-25
 
-รวมงานที่เคยตั้งเลขไว้เป็น 1.1.2 ทั้งหมด - ขึ้นเป็น minor version เพราะรอบนี้มีของใหม่
-ในหน้าจอ (รูปปก, กางอัลบั้มของศิลปิน, ปุ่มเล่นท้ายแถว) ไม่ใช่แค่ patch แก้บั๊ก
+Rolls up everything that had been numbered 1.1.2 - bumped to a minor version because this
+round adds real UI (cover art, expandable artist albums, inline play buttons), not just bug
+fixes.
 
 ### Added
-- รูปปกหน้าแถวในผลค้นหาและ My Lists: แถวเพลง/อัลบั้ม/เพลย์ลิสต์ได้ปกจริง ส่วนแถวศิลปิน
-  ได้รูปทรงกลมตามภาษาของ Spotify เอง (`RowThumbnails` โหลดแบบ async + แคชตาม URL
-  ทั้งเซสชัน, รวมคำขอ URL เดียวกันให้ยิงเน็ตครั้งเดียว, จำ URL ที่พลาดไว้ไม่ลองซ้ำ)
-  ช่องรูปกับ placeholder โผล่ทันทีตอนสร้างแถว รูปจริงมาเติมทีหลังโดยไม่ค้างจอ
-  และเลือกไฟล์รูปตัวเล็กสุดที่ยัง >= 64px แทนตัว 640px ที่ Spotify คืนมาเป็นตัวแรก
-  (รูปแสดงแค่ 34px - ตัวใหญ่กินหน่วยความจำ ~1.6MB ต่อแถว)
-- กดแถวศิลปินในผลค้นหาแล้วกางรายการอัลบั้มของศิลปินคนนั้นออกมาใต้แถวเดิม แสดงปี +
-  จำนวนเพลงของแต่ละอัลบั้ม (`GET /artists/{id}/albums` ไล่ทีละหน้าด้วย `offset` จนครบ 50
-  รายการ เพราะเพดาน `limit` ของ endpoint นี้เหลือ 10 ต่อหน้าแล้ว, กันอัลบั้มซ้ำข้าม market
-  ด้วยชื่อ, แคชต่อศิลปินทั้งเซสชัน) กดอัลบั้มต่อเพื่อดูรายชื่อเพลงได้เหมือน
-  หมวด Albums และกดแถวศิลปินซ้ำเพื่อหุบ - ลูกศร `>` / `<` ท้ายแถวบอกสถานะ
-  กางได้ทีละคน เพราะกางพร้อมกันหลายคนแล้วลิสต์ยาวจนหาของไม่เจอ
-  หมายเหตุ: แถวศิลปินไม่ได้สั่งเล่น artist radio แบบเดิมแล้ว (กด = กางอัลบั้ม)
-- ไฮไลต์แถวที่เพิ่งกดในพื้นที่ผลค้นหา/My Lists เป็นสีเขียวทันทีที่กด ไม่ต้องรอ Spotify ตอบ
-  (โหลดอัลบั้ม/สลับเพลงกินเวลาเป็นวินาที เดิมกดแล้วไม่มีอะไรตอบสนองเลย)
-- ปุ่มเล่นวงกลมท้ายแถว artist / album ในผลค้นหา - สั่งเล่นทั้งชุดได้โดยไม่ต้องกางเข้าไปเลือกเพลง
-  (กดแถว = กางอัลบั้ม/ดูรายชื่อเพลง, กดปุ่ม = เล่นเลย) ส่วนแถว playlist กดแล้วเล่นทั้งชุดตรงๆ
-  ตามเดิม ไม่มีการกาง (Spotify ตัด track list ของ playlist ส่วนใหญ่ออกจาก response อยู่แล้ว)
-- ซ่อนบรรทัด "0 tracks" ใต้ชื่อ playlist ใน My Lists - `/me/playlists` คืน `tracks.total = 0`
-  มาเป็นประจำ การโชว์ตามตรงมีแต่ทำให้เข้าใจผิดว่า playlist ว่าง
+- Row thumbnails in search results and My Lists: track/album/playlist rows now show real
+  cover art, and artist rows get a circular photo matching Spotify's own visual language
+  (`RowThumbnails` loads asynchronously with a session-wide cache keyed by URL, coalesces
+  duplicate requests for the same URL into a single fetch, and remembers failed URLs so it
+  doesn't retry them). The image slot and its placeholder appear immediately when a row is
+  built, with the real image filling in later without any visible stall, and it picks the
+  smallest image at or above 64px rather than the 640px one Spotify lists first (rows only
+  display images at 34px - the larger file costs roughly 1.6MB of texture memory per row).
+- Tapping an artist row in search results now expands a list of that artist's albums beneath
+  it, showing year and track count for each (`GET /artists/{id}/albums`, paged with `offset`
+  until 50 are collected, since this endpoint's `limit` ceiling dropped to 10 per page; albums
+  duplicated across markets are deduplicated by name; cached per artist for the session).
+  Tapping an album from there shows its track list the same way the Albums section does, and
+  tapping the artist row again collapses it - the `>` / `<` arrow at the end of the row shows
+  which state it's in. Only one artist can be expanded at a time, since expanding several at
+  once made the list too long to scan.
+  Note: tapping an artist row no longer starts artist radio directly (tapping now expands the
+  album list instead).
+- Rows tapped in the search/My Lists results area now highlight green immediately on tap,
+  rather than waiting for Spotify to respond (loading an album or switching tracks can take a
+  couple of seconds, and previously nothing happened visibly until it did).
+- A small circular play button at the end of artist / album rows in search results - starts
+  playing the whole thing without expanding into track selection first (tapping the row itself
+  still expands/shows tracks; tapping the button plays immediately). Playlist rows keep their
+  original behavior of playing the whole playlist on tap with no expansion, since Spotify
+  strips the track list from most playlist responses anyway.
+- Hid the "0 tracks" line under playlist names in My Lists - `/me/playlists` reports
+  `tracks.total = 0` routinely, and showing that number as-is only implied the playlist was
+  empty.
 
 ### Fixed
-- แก้การยิง API รัวไม่หยุดทุกครั้งที่เพลงใกล้จบ: trigger "เพลงจบ" ถูกติดอาวุธใหม่ทุกครั้งที่
-  sync ข้อมูลเพลง พอ Spotify ยังคืนเพลงเดิมที่ปลายเพลง (ยังสลับให้ไม่ทัน) เฟรมถัดไปก็ยิงซ้ำทันที
-  วนแบบนั้นจนกว่าเพลงจะเปลี่ยนจริง - ตอนนี้ติดอาวุธใหม่เฉพาะตอนเปลี่ยนเพลงหรือกลับมาอยู่ห่าง
-  ปลายเพลงเกิน 2 วินาที และตอนเพลงจบใช้วงจรตามผลแบบเดียวกับหลังสั่งเล่น (สูงสุด 4 ครั้ง)
-- แก้การยิง API ถี่เป็นชุดเมื่อกดหลายแถวติดๆ กัน: วงจรวนเช็คหลังสั่งเล่น (4 ครั้งต่อคำสั่ง)
-  เดิมซ้อนกันวงต่อวง กด 5 แถวรัวๆ = `GET /me/player` 20 ครั้งใน ~2 วินาที ตอนนี้คำสั่งใหม่
-  ทำให้วงจรของคำสั่งเก่าเลิกวนทันที (`RefreshCoordinator.BeginPlayCycle`)
-- แก้รูปปกหน้าแถวเป็นวงรี: `HorizontalLayoutGroup` ของแถวเปิด `childForceExpandHeight`
-  (ค่า default ของ Unity คือ `true`) มันจึงยืดความสูงรูปเต็มแถวทั้งที่ความกว้างล็อกไว้
-  ตอนนี้แถวคุมความสูงจาก preferred ของลูกแต่ละตัว และช่องรูปล็อก flexible ทั้งสองแกน
-- แก้แถวที่ไม่มีรูป (ศิลปินบางคนไม่มีรูปบน Spotify) ชิดซ้ายคนเดียวจนคอลัมน์ชื่อไม่ตรงกัน:
-  ทุกแถวในลิสต์ที่มีรูปจะกันช่องไว้เสมอแล้วโชว์ placeholder แทน
-- เพิ่มความสูงแถวในลิสต์ 36 → 42 ให้รูปปกกับข้อความสองบรรทัดไม่อึดอัด
-- แก้ชื่อเพลงในคิว "หายไป" (เหลือแต่ชื่อศิลปิน) พร้อมกับไฮไลต์เขียวของเพลงที่กำลังเล่น:
-  Unity `Text` ซ่อนทั้งบรรทัดเมื่อ rect เตี้ยเกินความสูงฟอนต์ (`verticalOverflow` เป็น
-  `Truncate` โดยดีฟอลต์) พอ restyle เปลี่ยนไปใช้ฟอนต์ IBM Plex ของเกมซึ่งสูงกว่า Arial
-  บรรทัดชื่อเพลง 12pt ในแถวสูง 30px เลยตกเกณฑ์แล้วหายไป ตอนนี้ `CreateText` ตั้ง
-  `verticalOverflow = Overflow` ข้อความจึงวาดเสมอ
-- แก้ชื่อเพลงยาวตัดบรรทัดแล้วล้นไปทับแถวอื่นและทับพื้นที่ search/My Lists ด้านล่าง:
-  แถวคิวและแถวผลค้นหา/เพลย์ลิสต์เรนเดอร์ชื่อเพลงกับศิลปินเป็นบรรทัดเดียว
-  (`horizontalOverflow = Overflow`) แล้ว clip ด้วย `RectMask2D` ชื่อยาวจึงถูกตัดที่ขอบคอลัมน์
-  แทนที่จะขึ้นบรรทัดใหม่ และเพิ่มความสูงแถว 30/32 → 36
-- แก้คิวแสดงเพลงซ้ำสองรอบเมื่อเปิด repeat: ถ้าเพลย์ลิสต์สั้นกว่าหน้าต่างคิว (~20 เพลง)
-  `/me/player/queue` จะวนกลับไปต้น context เพลงเดิมจึงกลับมาอีกรอบ (เพลย์ลิสต์ 7 เพลง
-  แสดง 14+ แถว) ตอนนี้ `GetQueueTracksAsync` กันซ้ำด้วย `HashSet` ของ track id แล้ว
-  (ไฟล์ local ที่ไม่มี id ยังผ่านตามปกติเพราะกันซ้ำไม่ได้)
-- แก้ใช้งานครั้งแรกแล้ว UI ไม่อัพเดทเอง (ต้องกด ↻) หลังไปเปิดเพลงใน Spotify แล้วสลับกลับเข้าเกม:
-  ตัว resync ตอน alt-tab (`Application.focusChanged`) ถูก subscribe ใน `ApplyNowPlaying`
-  หลัง null check เคส connect ตอนยังไม่มีเพลงเล่นเลยไม่เคยถูกติดตั้ง ตอนนี้ subscribe
-  ตั้งแต่ inject แทน
-- แก้แถวเพลงของเกมวาดทับ playlist header กับแถบ search ทันทีหลังกด Connect สำเร็จ:
-  `OnLoginSuccess` เปิดแถวพวกนี้ด้วย `SetActive(true)` โดยไม่ rebuild scroll content
-  ชั้นนอก section สูงขึ้นแต่แถวของเกมไม่เลื่อนลงตาม (root cause เดียวกับข้อถัดไป)
-- แก้รายการเพลงของเกม (Original & Special) ทับผลค้นหา Spotify: `BuildSearchResults`
-  rebuild เฉพาะลิสต์ผลค้นหา ไม่ได้ rebuild scroll content ด้านนอก section ของม็อดจึงไม่ขยาย
-  ตามผลลัพธ์ ตอนนี้ `ForceRebuildLayoutImmediate` ที่ `_cachedScrollRect.content` ด้วย
-  แถวของเกมจึงไหลลงไปอยู่ใต้ผลค้นหา
+- Fixed the API being hammered non-stop near the end of every track: the "track ended"
+  trigger was re-armed every time track data synced, so if Spotify still reported the same
+  track sitting at the end (hadn't switched over yet), the very next frame fired the same
+  request again, looping until the track actually changed. It's now only re-armed on an actual
+  track change, or when playback moves more than 2 seconds away from the end again, and the
+  end-of-track case now uses the same bounded retry loop as right after pressing play
+  (up to 4 attempts).
+- Fixed a burst of API calls whenever several rows were tapped in quick succession: the
+  retry-loop that runs after issuing a play command (4 attempts per command) used to stack one
+  loop on top of another, so five quick taps meant twenty `GET /me/player` calls in about two
+  seconds. A new command now immediately cancels any older command's loop
+  (`RefreshCoordinator.BeginPlayCycle`).
+- Fixed row thumbnails rendering as ovals: the row's `HorizontalLayoutGroup` had
+  `childForceExpandHeight` enabled (Unity's default is `true`), stretching the image's height
+  to fill the row even though its width was locked. Row height is now driven by each child's
+  own preferred size, and the image slot locks both axes.
+- Fixed rows with no image (some artists have none on Spotify) sitting flush left on their
+  own, throwing off the name column's alignment with other rows: every row in a list that has
+  images now always reserves the slot and shows a placeholder instead.
+- Increased list row height from 36px to 42px so cover art and two lines of text have room to
+  breathe.
+- Fixed track titles in the queue appearing to "vanish" (leaving only the artist name) right
+  when the currently-playing highlight turned green: Unity's `Text` hides an entire line when
+  its rect is shorter than the font's line height (`verticalOverflow` defaults to `Truncate`).
+  Once the restyle switched to the game's IBM Plex font, which sits taller than Arial, the
+  12pt track title in a 30px-tall row fell under that threshold and disappeared. `CreateText`
+  now sets `verticalOverflow = Overflow` so text always draws.
+- Fixed long track titles wrapping onto a second line and spilling over neighboring rows and
+  the search/My Lists area beneath them: queue rows and search/playlist rows now render the
+  title and artist as a single line (`horizontalOverflow = Overflow`) clipped with
+  `RectMask2D`, so a long name is cut off at the column edge instead of wrapping, and row
+  height grew from 30/32px to 36px.
+- Fixed the queue showing every track twice with repeat enabled: when a playlist is shorter
+  than the queue window (~20 tracks), `/me/player/queue` wraps back around to the start of the
+  context, so the same tracks reappear (a 7-track playlist showed 14+ rows).
+  `GetQueueTracksAsync` now deduplicates by track id using a `HashSet` (local files with no id
+  still pass through as-is, since they can't be deduplicated).
+- Fixed the UI not updating on its own the first time you switched to Spotify and back to the
+  game (a manual ↻ press was required): the alt-tab resync handler
+  (`Application.focusChanged`) was subscribed inside `ApplyNowPlaying`, after a null check that
+  the very first connect - with nothing playing yet - never reached, so the subscription never
+  happened. It's now subscribed right at inject time instead.
+- Fixed the game's own row list drawing over the playlist header and search bar immediately
+  after a successful Connect: `OnLoginSuccess` revealed those rows with `SetActive(true)`
+  without rebuilding the outer scroll content, so the section grew taller but the game's rows
+  didn't shift down to make room (same root cause as the next item).
+- Fixed the game's own track list (Original & Special) overlapping Spotify search results:
+  `BuildSearchResults` rebuilt only the results list itself, not the scroll content outside the
+  mod's section, so the section never grew to match the results. `ForceRebuildLayoutImmediate`
+  now runs on `_cachedScrollRect.content` too, so the game's rows flow down below the results
+  as expected.
 
 ### Changed
-- รวม request envelope ของ Spotify (HttpClient, bearer header, 429 → rate limiter,
-  error logging, retry 401/403) ที่เดิมเขียนซ้ำใน `SpotifyApi` / `SpotifyWebApi` /
-  `SpotifySearchApi` ให้เหลือ `SpotifyGateway` ตัวเดียว
-- แยก state machine ของ now-playing (นาฬิกา interpolate ความคืบหน้า + สถานะ play/pause)
-  ออกจาก `SpotifyButtonInjector` เป็น `NowPlayingSession` ที่เป็น logic ล้วน ไม่พึ่ง Unity
-  พร้อม unit test 13 เคสที่รันด้วย .NET SDK ปกติได้โดยไม่ต้องเปิดเกม
-- ลบโค้ด playlist-selection ที่ไม่ถูกเรียกใช้แล้วออก
-- เก็บ HTTP ที่หลุด envelope ใน `SpotifyButtonInjector` เข้า API layer: เดิม injector
-  ประกอบ body ของ `me/player/play` เอง 3 ชุด และมี `HttpClient` ตัวที่สี่ยิง
-  `/albums/{id}/tracks` ตรงๆ (ไม่ผ่าน retry/429/logging ของ gateway) ตอนนี้คำสั่งเล่น
-  ทั้งหมดอยู่ใน `SpotifyApi.Play*` และการโหลดอัลบั้มอยู่ใน `SpotifyWebApi.GetAlbumTracksAsync`
-- แยกชุดประกอบ widget สไตล์เกม (โทนสี, หาฟอนต์ของเกม, ปุ่มวงกลม/pill, progress slider,
-  ช่องค้นหา) ออกเป็น `SpotifyUiKit` - โมดูลที่รู้แค่ "หน้าตา" ไม่รู้จัก Spotify เลย
-- แยก logic หน้าจอของ panel ทั้งหมด (แถวไหนโผล่/ซ่อน, ตอนไหนต้อง reflow layout,
-  พื้นที่ผลลัพธ์โชว์อะไร, toggle My Lists) ออกเป็น `PanelViewModel` - state machine ล้วน
-  ป้อน event เข้าแล้วคืน `PanelState` snapshot เต็มชุด ฝั่ง Unity เหลือ `Apply(state)`
-  จุดเดียวแบบ idempotent ทำให้บั๊กตระกูล "ลืม SetActive/ลืม rebuild" (ต้นเหตุ 3 ใน 6
-  บั๊กของเวอร์ชันนี้) เกิดไม่ได้เชิงโครงสร้าง (#15, #16)
-- แยกกฎ orchestration ของการ refresh (โหลด context เมื่อไหร่/ผ่านทางไหน, กฎ
-  commit-เฉพาะ-ตอนสำเร็จที่กันคิวว่างค้างถาวร, จังหวะ retry หลังสั่งเล่น, cooldown ของ
-  focus-resync) ออกเป็น `RefreshCoordinator` - injector เหลือแค่ยิง API ตามแผน (#17, #18)
-- test bench รวมทั้งหมด 73 เคส (`dotnet test` ไม่ต้องมีเกม/Unity/บัญชี Spotify) ครอบ
-  `NowPlayingSession`, `PanelViewModel`, `RefreshCoordinator` รวม regression ของบั๊กจริง
-  ทุกตัวในเวอร์ชันนี้ที่เดิมต้องเปิดเกม + login + เปิดเพลงจริงถึงจะเจอ
+- Consolidated Spotify's request envelope (HttpClient, bearer header, 429 → rate limiter,
+  error logging, 401/403 retry), previously duplicated across `SpotifyApi`, `SpotifyWebApi`,
+  and `SpotifySearchApi`, into a single `SpotifyGateway`.
+- Extracted the now-playing state machine (the progress-bar interpolation clock and
+  play/pause state) out of `SpotifyButtonInjector` into `NowPlayingSession`, pure logic with
+  no Unity dependency, backed by 13 unit tests that run on the plain .NET SDK without the game.
+- Removed dead playlist-selection code that was no longer called anywhere.
+- Folded HTTP calls that had drifted outside the envelope back into the API layer: the
+  injector used to assemble the body for `me/player/play` itself in three separate places, and
+  a fourth `HttpClient` hit `/albums/{id}/tracks` directly, bypassing the gateway's
+  retry/429/logging entirely. Every play command now goes through `SpotifyApi.Play*`, and
+  album loading goes through `SpotifyWebApi.GetAlbumTracksAsync`.
+- Split the game-styled widget kit (colors, locating the game's font, circular/pill buttons,
+  the progress slider, the search field) out into `SpotifyUiKit` - a module that only knows
+  "what it looks like" and nothing about Spotify.
+- Split all of the panel's screen logic (which rows show/hide, when a layout reflow is
+  needed, what the results area displays, the My Lists toggle) out into `PanelViewModel`, a
+  pure state machine: events go in, a full `PanelState` snapshot comes out, and the Unity side
+  is left with a single idempotent `Apply(state)` call. This makes the "forgot to SetActive" /
+  "forgot to rebuild" family of bugs (the root cause of 3 of the 6 bugs fixed this version)
+  structurally impossible (#15, #16).
+- Split the refresh orchestration rules (when/how to load context, the commit-only-on-success
+  rule that prevents a queue from getting stuck empty, the retry timing after issuing a play
+  command, the focus-resync cooldown) out into `RefreshCoordinator` - the injector is left
+  just issuing API calls per the plan it's handed (#17, #18).
+- The test bench now covers 73 cases total (`dotnet test`, no game/Unity/Spotify account
+  needed), spanning `NowPlayingSession`, `PanelViewModel`, and `RefreshCoordinator`, including
+  a regression test for every real bug in this version that used to require opening the game,
+  logging in, and playing a track to even reproduce.
 
 ## [1.1.1]
 
 ### Fixed
-- แก้อาการ UI ค้างหลังกด **Connect Spotify** แล้ว approve: callback ของ OAuth
-  (`OnLoginSuccess` / `OnLoginFailed`) ถูกเรียกจาก continuation ที่รันบน thread pool
-  แล้วไปแตะ Unity UI ตรงๆ ทำให้ throw `"can only be called from the main thread"`
-  และโดนกลืนเงียบ ๆ — เบราว์เซอร์ขึ้น "Login successful" แต่ panel ในเกมค้างที่ปุ่ม
-  Connect ไม่ขยับ ตอนนี้ marshal กลับ main thread ด้วย `Plugin.RunOnMainThread(...)` แล้ว
+- Fixed the UI freezing after pressing **Connect Spotify** and approving in the browser: the
+  OAuth callback (`OnLoginSuccess` / `OnLoginFailed`) was invoked from a thread-pool
+  continuation and touched Unity UI directly, throwing "can only be called from the main
+  thread" - silently swallowed, so the browser showed "Login successful" while the in-game
+  panel sat stuck on the Connect button. It now marshals back to the main thread via
+  `Plugin.RunOnMainThread(...)`.
 
 ## [1.1.0]
 
-- เวอร์ชันเริ่มต้นที่มี in-game Spotify player: playback control, search และ playlist selection
+- Initial release with an in-game Spotify player: playback control, search, and playlist
+  selection.

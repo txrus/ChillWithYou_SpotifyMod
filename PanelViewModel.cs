@@ -111,6 +111,14 @@ namespace ChillWithYou_SpotifyMod
         public bool QueueListVisible;
         public bool SearchRowVisible;
 
+        // แถบเสียง: ซ่อนเมื่อไม่มีเพลง/อุปกรณ์สั่งระดับเสียงไม่ได้ (ลากแล้วไม่เกิดอะไรขึ้นน่าสับสนกว่า)
+        public bool VolumeRowVisible;
+        public int VolumePercent = 100;
+
+        // สุ่มเพลง / เล่นซ้ำ - หน้าตาปุ่ม (glyph, สี) เป็นเรื่องของ renderer
+        public bool ShuffleOn;
+        public RepeatMode RepeatMode;
+
         public string StatusText = "";
 
         // ส่วน now-playing (เฉพาะของที่เปลี่ยนตาม event - เข็มวินาที/slider เป็นของ NowPlayingSession)
@@ -243,6 +251,12 @@ namespace ChillWithYou_SpotifyMod
                 Current.ShowIdleProgress = true;
                 Current.HighlightedTrackId = null;
                 Current.NowPlayingCoverBytes = null;
+                // ไม่มีอะไรเล่นอยู่ = ไม่มีสถานะจริงให้โชว์ - ปล่อยปุ่มติดเขียวค้างจะหลอกตา
+                Current.ShuffleOn = false;
+                Current.RepeatMode = RepeatMode.Off;
+                // แถวเสียงโผล่/หายคือการเปลี่ยนโครงสร้าง ต้อง reflow ไม่งั้นแถวของเกมวาดทับ
+                Current.NeedsReflow = Current.VolumeRowVisible;
+                Current.VolumeRowVisible = false;
                 return Current;
             }
 
@@ -252,14 +266,49 @@ namespace ChillWithYou_SpotifyMod
             Current.ShowIdleProgress = false;
             Current.HighlightedTrackId = info.TrackId;
             Current.NowPlayingCoverBytes = info.ThumbnailBytes;
+
+            Current.ShuffleOn = info.ShuffleOn;
+            Current.RepeatMode = info.RepeatMode;
+
+            bool volumeVisible = info.SupportsVolume && info.VolumePercent != null;
+            Current.NeedsReflow = volumeVisible != Current.VolumeRowVisible;
+            Current.VolumeRowVisible = volumeVisible;
+            if (info.VolumePercent != null) Current.VolumePercent = info.VolumePercent.Value;
             return Current;
         }
+
 
         // สลับ play/pause ในเครื่องโดยไม่ยิง GET ตาม (ผลลัพธ์รู้อยู่แล้ว) - เปลี่ยนแค่ glyph
         public PanelState LocalPlayPauseToggled(bool isPlaying)
         {
             Current.NeedsReflow = false;
             Current.PlayPauseGlyph = isPlaying ? "||" : ">";
+            return Current;
+        }
+
+        // สลับสุ่มเพลง/เล่นซ้ำในเครื่องทันทีโดยไม่รอ Spotify ตอบ (เหตุผลเดียวกับ play/pause:
+        // ผลลัพธ์รู้อยู่แล้วถ้าคำสั่งผ่าน) - ผู้เรียกคืนค่าเดิมเองถ้าสั่งไม่สำเร็จ
+        public PanelState LocalShuffleToggled(bool on)
+        {
+            Current.NeedsReflow = false;
+            Current.ShuffleOn = on;
+            return Current;
+        }
+
+        public PanelState LocalRepeatChanged(RepeatMode mode)
+        {
+            Current.NeedsReflow = false;
+            Current.RepeatMode = mode;
+            return Current;
+        }
+
+        // ผู้เล่นเพิ่งลากแถบเสียงเสร็จ - ต้องจดค่าใหม่ทันที ไม่ใช่รอค่าจาก poll รอบหน้า
+        // ไม่งั้น Apply ครั้งถัดไป (เกิดได้จากทุก event ไม่ใช่แค่ poll) จะเอาค่าเก่าจากเซิร์ฟเวอร์
+        // มาเขียนทับ แถบเลยเด้งกลับที่เดิมทันทีที่ปล่อยนิ้ว
+        public PanelState LocalVolumeChanged(int percent)
+        {
+            Current.NeedsReflow = false;
+            Current.VolumePercent = percent < 0 ? 0 : percent > 100 ? 100 : percent;
             return Current;
         }
 
@@ -286,10 +335,10 @@ namespace ChillWithYou_SpotifyMod
             string kind = SpotifyContext.KindLabel(playlist.ContextUri);
             Current.HeaderSubLabel = kind != null ? $"PLAYING FROM {kind}" : null;
 
-            // artist ไม่มีปกให้ใช้ (คิวเพลงไม่ได้ให้ภาพของตัว context มา) -> ซ่อนช่องรูปไปเลย
-            bool isArtist = SpotifyContext.IsArtist(playlist.ContextUri);
-            Current.HeaderCoverVisible = !isArtist;
-            Current.HeaderCoverBytes = isArtist ? null : playlist.CoverImageBytes;
+            // artist/Liked Songs ไม่มีปกให้ใช้ (ปกเปลี่ยนตามอัลบั้มของแต่ละเพลง) -> ซ่อนช่องรูปไปเลย
+            bool viewOnly = SpotifyContext.RowsViewOnly(playlist.ContextUri);
+            Current.HeaderCoverVisible = !viewOnly;
+            Current.HeaderCoverBytes = viewOnly ? null : playlist.CoverImageBytes;
 
             if (playlist.Tracks == null || playlist.Tracks.Count == 0)
             {
@@ -326,12 +375,12 @@ namespace ChillWithYou_SpotifyMod
         // ใน context อยู่แล้ว แถวแรกคือเพลงที่กำลังเล่น)
         private void AddQueueRows(List<PlaylistTrackInfo> tracks, string contextUri)
         {
-            bool isArtist = SpotifyContext.IsArtist(contextUri);
+            bool viewOnly = SpotifyContext.RowsViewOnly(contextUri);
             for (int i = 0; i < tracks.Count; i++)
             {
                 PlaylistTrackInfo t = tracks[i];
-                // artist context: Spotify ไม่รับ offset -> แถวกดไม่ได้ แสดงคิวอย่างเดียว
-                bool clickable = !isArtist && !string.IsNullOrEmpty(t.Id);
+                // artist/collection context: สั่งเล่นตามตำแหน่งไม่ได้ -> แถวกดไม่ได้ แสดงคิวอย่างเดียว
+                bool clickable = !viewOnly && !string.IsNullOrEmpty(t.Id);
                 Current.QueueRows.Add(new PanelRow
                 {
                     Index = (i + 1).ToString(),
@@ -523,6 +572,8 @@ namespace ChillWithYou_SpotifyMod
             }
         }
 
+        // หมายเหตุ: เคยมีแถว Liked Songs อยู่เหนือรายการนี้ แต่ /me/tracks โดน 403 ใน
+        // development mode เลยถอดออก - เล่น Liked Songs จากแอปแล้วแผงจะโชว์คิวให้แทน
         private void BuildMyPlaylistSection()
         {
             var section = NewSection("My Playlists");

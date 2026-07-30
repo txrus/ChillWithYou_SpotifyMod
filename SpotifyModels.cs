@@ -8,6 +8,18 @@ using System.Collections.Generic;
 
 namespace ChillWithYou_SpotifyMod
 {
+    // โหมดเล่นซ้ำ - "context" = ซ้ำทั้ง playlist/album ที่เล่นอยู่ / "track" = ซ้ำเพลงเดียว
+    // การแปลงไป/กลับค่าสตริงของ Spotify เป็นเรื่องของ SpotifyApi (ไฟล์นี้ห้ามรู้จัก wire format)
+    public enum RepeatMode { Off, Context, Track }
+
+    public static class RepeatModes
+    {
+        // ลำดับการกดวน: ปิด -> ซ้ำทั้งชุด -> ซ้ำเพลงเดียว -> ปิด (ลำดับเดียวกับแอป Spotify เอง)
+        public static RepeatMode Next(RepeatMode current) =>
+            current == RepeatMode.Off ? RepeatMode.Context :
+            current == RepeatMode.Context ? RepeatMode.Track : RepeatMode.Off;
+    }
+
     public class SpotifyNowPlayingInfo
     {
         public string TrackId;
@@ -22,6 +34,15 @@ namespace ChillWithYou_SpotifyMod
                                          // null เมื่อเล่นจาก context ที่ไม่ใช่ playlist (artist/album) - ดู ContextUri
         public string ContextUri;        // context.uri ดิบ เช่น spotify:artist:xxx / spotify:album:xxx
                                          // ใช้เช็คว่า context เปลี่ยนไหม แทน PlaylistContextId ที่เห็นแค่ playlist
+
+        // ระดับเสียงของอุปกรณ์ที่เล่นอยู่ - null เมื่อไม่มีอุปกรณ์/ไม่รายงานมา
+        public int? VolumePercent;
+        // false = อุปกรณ์นี้สั่งระดับเสียงผ่าน Web API ไม่ได้ (เครื่องเล่นบางรุ่น/ลำโพงบางยี่ห้อ)
+        // -> ซ่อนแถบเสียงไปเลย ดีกว่าให้ลากแล้วไม่มีอะไรเกิดขึ้น
+        public bool SupportsVolume;
+
+        public bool ShuffleOn;
+        public RepeatMode RepeatMode;
     }
 
     public class PlaylistTrackInfo
@@ -121,6 +142,17 @@ namespace ChillWithYou_SpotifyMod
         public static bool IsArtist(string contextUri) =>
             !string.IsNullOrEmpty(contextUri) && contextUri.StartsWith("spotify:artist:");
 
+        // Liked Songs ("spotify:user:xxx:collection") - อ่านรายชื่อเพลงตรงๆ ไม่ได้ (/me/tracks
+        // โดน 403 ใน development mode) เลยแสดงผ่านคิวแบบเดียวกับ artist/album
+        public static bool IsCollection(string contextUri) =>
+            !string.IsNullOrEmpty(contextUri) &&
+            contextUri.StartsWith("spotify:user:") && contextUri.EndsWith(":collection");
+
+        // แถวคิวของ context นี้กดเล่นไม่ได้: artist ไม่รับ offset ส่วน collection ไม่แน่ว่ารับ
+        // (ทดลองไม่ได้เพราะอ่าน track list ไม่ได้อยู่แล้ว) - แถวที่กดแล้วเงียบแย่กว่าแถวดูเฉยๆ
+        public static bool RowsViewOnly(string contextUri) =>
+            IsArtist(contextUri) || IsCollection(contextUri);
+
         // "spotify:album:xxx" -> "ALBUM" / คืน null เมื่อไม่มี context uri หรือเป็นชนิดที่ไม่รู้จัก
         // (ให้ผู้เรียกซ่อน label ไปเลย ดีกว่าเดาผิดแล้วบอกผู้เล่นว่ากำลังเล่นจากอะไรที่ไม่จริง)
         public static string KindLabel(string contextUri)
@@ -129,6 +161,7 @@ namespace ChillWithYou_SpotifyMod
             if (contextUri.StartsWith("spotify:playlist:")) return "PLAYLIST";
             if (contextUri.StartsWith("spotify:album:")) return "ALBUM";
             if (contextUri.StartsWith("spotify:artist:")) return "ARTIST";
+            if (IsCollection(contextUri)) return "LIKED SONGS";
             return null;
         }
     }

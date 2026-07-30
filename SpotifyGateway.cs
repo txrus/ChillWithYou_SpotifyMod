@@ -4,6 +4,7 @@
 // SpotifyApi / SpotifyWebApi / SpotifySearchApi เหลือหน้าที่แค่ประกอบ path + parse JSON
 // เดิม envelope นี้ถูก copy อยู่ในทั้งสามโมดูล (แต่ละตัวมี HttpClient + 429 handling ของตัวเอง)
 using System;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -17,12 +18,13 @@ namespace ChillWithYou_SpotifyMod
         private const string BaseUrl = "https://api.spotify.com/v1/";
         private static readonly HttpClient Http = new HttpClient();
 
-        // ระยะรอก่อน retry ตอนเจอ 401/403 ทั้งที่ token ยังดี - รวมแล้วไม่เกิน ~2 วิ
-        // ถ้ายังไม่ผ่านหลังจากนี้ ปล่อยให้ผู้เรียกไปเริ่มรอบใหม่เองดีกว่าค้างรอต่อ
-        private static readonly int[] UnauthorizedRetryDelaysMs = { 300, 600, 1000 };
-
         // GET {path} แล้วคืน JObject; null เมื่อ blocked / ยังไม่ login / 429 / non-2xx / 204 / body ว่าง
-        public static async Task<JObject> GetJsonAsync(string path)
+        public static Task<JObject> GetJsonAsync(string path) => GetParsedAsync(path, JObject.Parse);
+
+        // แกนของ GET - แยกฟังก์ชัน parse ออกมาเผื่อ endpoint ที่ตอบเป็นทรงอื่น (เคย
+        // มี GetJsonArrayAsync สำหรับ /me/tracks/contains ที่ตอบเป็น array - ถอดออกไป
+        // พร้อมฟีเจอร์คลังเพลงเพราะ endpoint โดน 403 ใน development mode)
+        private static async Task<T> GetParsedAsync<T>(string path, Func<string, T> parse) where T : class
         {
             HttpResponseMessage resp = await SendCoreAsync(HttpMethod.Get, path, null);
             if (resp == null) return null;
@@ -31,7 +33,7 @@ namespace ChillWithYou_SpotifyMod
                 if (resp.StatusCode == HttpStatusCode.NoContent) return null; // 204 = ไม่มี active device
                 string json = await resp.Content.ReadAsStringAsync();
                 if (string.IsNullOrWhiteSpace(json)) return null;
-                return JObject.Parse(json);
+                return parse(json);
             }
             catch (Exception ex)
             {
@@ -58,32 +60,17 @@ namespace ChillWithYou_SpotifyMod
             catch (Exception ex) { Plugin.Log.LogWarning($"[SpotifyGateway] image download failed: {ex.Message}"); return null; }
         }
 
-        // เลือก URL รูปที่เล็กที่สุดแต่ยังไม่ต่ำกว่า minWidth จาก array "images" ของ Spotify
-        // (เรียงใหญ่ -> เล็ก ปกติได้ 640/300/64) - รูปเล็กหน้าแถวกว้างแค่ 32px การหยิบ 640px
-        // มาใช้แปลว่าเสีย texture 1.6MB ต่อแถว ซึ่งแพงมากเมื่อผลค้นหามี 20 แถว
-        // คืนรูปที่เล็กที่สุดที่มีเมื่อไม่มีตัวไหนถึง minWidth และคืน null เมื่อไม่มีรูปเลย
+        // เลือก URL รูปจาก array "images" ของ Spotify - เกณฑ์การเลือกทั้งหมด (รวมเหตุผลเรื่อง
+        // ขนาด texture) อยู่ที่ SpotifyGatewayPolicy.PickImageUrl ซึ่งทดสอบได้ ตรงนี้แค่แปลง JToken
         public static string PickImageUrl(JToken images, int minWidth)
         {
             if (!(images is JArray arr) || arr.Count == 0) return null;
 
-            string best = null;
-            int bestWidth = int.MaxValue;
-            string smallest = null;
-            int smallestWidth = int.MaxValue;
-
+            var pairs = new List<(string Url, int? Width)>(arr.Count);
             foreach (JToken img in arr)
-            {
-                string url = img?.Value<string>("url");
-                if (string.IsNullOrEmpty(url)) continue;
+                pairs.Add((img?.Value<string>("url"), img?.Value<int?>("width")));
 
-                // width เป็น null ได้ (ปก mosaic ของ playlist บางอัน) - ถือว่าใหญ่พอไว้ก่อน
-                int width = img.Value<int?>("width") ?? int.MaxValue;
-
-                if (width <= smallestWidth) { smallestWidth = width; smallest = url; }
-                if (width >= minWidth && width <= bestWidth) { bestWidth = width; best = url; }
-            }
-
-            return best ?? smallest;
+            return SpotifyGatewayPolicy.PickImageUrl(pairs, minWidth);
         }
 
         // หัวใจของ envelope: คืน HttpResponseMessage 2xx ที่ผ่าน retry แล้ว หรือ null เมื่อ
@@ -107,17 +94,20 @@ namespace ChillWithYou_SpotifyMod
             {
                 HttpResponseMessage resp = await SendOnceAsync(method, path, jsonBody);
 
-                // Spotify ปฏิเสธเป็นครั้งคราวเหมือนไม่ได้ login ทั้งที่ token ใช้ได้จริง:
-                // GET ได้ 401 "Access token missing", คำสั่งควบคุมได้ 403 PREMIUM_REQUIRED
-                // (มอง request ที่ไม่มี token เป็นผู้ใช้ทั่วไปที่สั่งควบคุมไม่ได้) - retry ให้แทนผู้ใช้
-                // เช็ค token ก่อนเสมอ ไม่งั้นเคส token ตายจริงจะโดน retry ฟรีๆ ทุกครั้ง
+                // "response แบบนี้ + token สภาพนี้ ควรทำอะไรต่อ" เป็นกฎของ SpotifyGatewayPolicy
+                // (ทดสอบได้บน bench) - ตรงนี้เหลือแค่ plumbing: ถามซ้ำหลังทุกการยิง แล้วทำตามคำตอบ
+                //
+                // เคส RetryTransientAuth: Spotify ปฏิเสธเป็นครั้งคราวเหมือนไม่ได้ login ทั้งที่ token
+                // ใช้ได้จริง (GET ได้ 401 "Access token missing", คำสั่งควบคุมได้ 403 PREMIUM_REQUIRED)
+                // - retry ให้แทนผู้ใช้ตามระยะในตาราง จนหมดโควตาแล้วปล่อยเข้าเคส Fail ตามปกติ
                 for (int attempt = 1;
-                     attempt <= UnauthorizedRetryDelaysMs.Length && IsTransientAuthFailure(resp);
+                     attempt <= SpotifyGatewayPolicy.TransientAuthRetryDelaysMs.Length
+                         && Classify(resp) == GatewayAction.RetryTransientAuth;
                      attempt++)
                 {
-                    int delay = UnauthorizedRetryDelaysMs[attempt - 1];
+                    int delay = SpotifyGatewayPolicy.TransientAuthRetryDelaysMs[attempt - 1];
                     Plugin.Log.LogInfo($"[SpotifyGateway] {method} {path} โดน {(int)resp.StatusCode} ทั้งที่ token ยังดี - " +
-                        $"รอ {delay}ms แล้วลองใหม่ (ครั้งที่ {attempt}/{UnauthorizedRetryDelaysMs.Length})");
+                        $"รอ {delay}ms แล้วลองใหม่ (ครั้งที่ {attempt}/{SpotifyGatewayPolicy.TransientAuthRetryDelaysMs.Length})");
                     resp.Dispose();
                     await Task.Delay(delay);
                     resp = await SendOnceAsync(method, path, jsonBody);
@@ -125,27 +115,27 @@ namespace ChillWithYou_SpotifyMod
                         Plugin.Log.LogInfo($"[SpotifyGateway] {method} {path} retry ครั้งที่ {attempt} ผ่านแล้ว");
                 }
 
-                if (resp.StatusCode == (HttpStatusCode)429)
+                switch (Classify(resp))
                 {
-                    SpotifyRateLimiter.ReportTooManyRequests(resp);
-                    resp.Dispose();
-                    return null;
-                }
+                    case GatewayAction.Succeed:
+                        return resp; // 2xx - ผู้เรียก Dispose เอง
 
-                if (!resp.IsSuccessStatusCode)
-                {
-                    string body = await resp.Content.ReadAsStringAsync();
-                    Plugin.Log.LogWarning($"[SpotifyGateway] {method} {path} failed: {resp.StatusCode} - {body}");
-                    // ถ้ายัง 401 อยู่หลัง retry แสดงว่าไม่ใช่อาการชั่วคราวแล้ว - log สภาพ token ไว้สืบต่อ
-                    if (resp.StatusCode == HttpStatusCode.Unauthorized)
-                        Plugin.Log.LogWarning(
-                            $"[SpotifyGateway] token ตอนยิง: len={SpotifyAuth.AccessToken?.Length ?? -1}, " +
-                            $"เหลืออายุ={(SpotifyAuth.TokenExpiresAt - DateTime.UtcNow).TotalSeconds:F0}s, IsLoggedIn={SpotifyAuth.IsLoggedIn}");
-                    resp.Dispose();
-                    return null;
-                }
+                    case GatewayAction.RateLimited:
+                        SpotifyRateLimiter.ReportTooManyRequests(resp);
+                        resp.Dispose();
+                        return null;
 
-                return resp; // 2xx - ผู้เรียก Dispose เอง
+                    default: // Fail และ RetryTransientAuth ที่หมดโควตา retry แล้ว
+                        string body = await resp.Content.ReadAsStringAsync();
+                        Plugin.Log.LogWarning($"[SpotifyGateway] {method} {path} failed: {resp.StatusCode} - {body}");
+                        // ถ้ายัง 401 อยู่หลัง retry แสดงว่าไม่ใช่อาการชั่วคราวแล้ว - log สภาพ token ไว้สืบต่อ
+                        if (resp.StatusCode == HttpStatusCode.Unauthorized)
+                            Plugin.Log.LogWarning(
+                                $"[SpotifyGateway] token ตอนยิง: len={SpotifyAuth.AccessToken?.Length ?? -1}, " +
+                                $"เหลืออายุ={(SpotifyAuth.TokenExpiresAt - DateTime.UtcNow).TotalSeconds:F0}s, IsLoggedIn={SpotifyAuth.IsLoggedIn}");
+                        resp.Dispose();
+                        return null;
+                }
             }
             catch (Exception ex)
             {
@@ -153,6 +143,10 @@ namespace ChillWithYou_SpotifyMod
                 return null;
             }
         }
+
+        // สะพานจากโลก HttpResponseMessage เข้าเกณฑ์ pure ของ policy - อ่านสภาพ token สดทุกครั้งที่ถาม
+        private static GatewayAction Classify(HttpResponseMessage resp) =>
+            SpotifyGatewayPolicy.Classify((int)resp.StatusCode, SpotifyAuth.HasUsableTokenPublic);
 
         private static async Task<HttpResponseMessage> SendOnceAsync(HttpMethod method, string path, string jsonBody)
         {
@@ -163,9 +157,5 @@ namespace ChillWithYou_SpotifyMod
             return await Http.SendAsync(request);
         }
 
-        // 401/403 ที่เกิดทั้งที่ token ยังใช้ได้ = อาการชั่วคราว ไม่ใช่ token เสียหรือบัญชีไม่มีสิทธิ์
-        private static bool IsTransientAuthFailure(HttpResponseMessage resp) =>
-            (resp.StatusCode == HttpStatusCode.Unauthorized || resp.StatusCode == HttpStatusCode.Forbidden)
-            && SpotifyAuth.HasUsableTokenPublic;
     }
 }

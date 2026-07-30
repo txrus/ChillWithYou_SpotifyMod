@@ -405,6 +405,40 @@ namespace ChillWithYou_SpotifyMod
             return rt;
         }
 
+        // ป้ายบอกชื่อปุ่มลอยเหนือปุ่มตอนเอาเมาส์ไปชี้ - ใช้กับปุ่มไอคอนเล็กๆ ที่ตัวอักษรบนปุ่มเอง
+        // อ่านไม่ออกว่าคือฟังก์ชันอะไร (เช่น shuffle/repeat) ต่างจาก CreateHoverTimeLabel ตรงที่
+        // ตำแหน่งคงที่เหนือปุ่มเสมอ ไม่ต้องคำนวณตามเมาส์ - เป็นลูกของปุ่มเอง เลยลอยตามปุ่มไปเองถ้าปุ่มขยับ
+        // ผู้เรียกแค่ผูก AddHoverCallbacks เข้ากับ SetActive ของ GameObject ที่คืนมา
+        public static GameObject CreateButtonTooltip(Transform buttonTransform, string text)
+        {
+            GameObject go = new GameObject("Tooltip");
+            go.transform.SetParent(buttonTransform, worldPositionStays: false);
+
+            RectTransform rt = go.AddComponent<RectTransform>();
+            rt.anchorMin = new Vector2(0.5f, 1f);
+            rt.anchorMax = new Vector2(0.5f, 1f);
+            rt.pivot = new Vector2(0.5f, 0f);
+            rt.anchoredPosition = new Vector2(0f, 4f); // ลอยเหนือขอบบนปุ่มเล็กน้อย
+            rt.sizeDelta = new Vector2(58f, 16f);
+
+            Image bg = go.AddComponent<Image>();
+            bg.sprite = UiSprites.Pill;
+            bg.type = Image.Type.Sliced;
+            bg.color = new Color(0.03f, 0.03f, 0.055f, 0.92f);
+            bg.raycastTarget = false; // ห้ามรับ pointer - ไม่งั้นจะบัง pointer exit ของปุ่มด้านล่าง
+
+            Text label = CreateText(go.transform, text, 9, TextAnchor.MiddleCenter);
+            label.color = TextSecondary;
+            RectTransform labelRt = label.rectTransform;
+            labelRt.anchorMin = Vector2.zero;
+            labelRt.anchorMax = Vector2.one;
+            labelRt.offsetMin = Vector2.zero;
+            labelRt.offsetMax = Vector2.zero;
+
+            go.SetActive(false); // โผล่เฉพาะตอนชี้เท่านั้น
+            return go;
+        }
+
         // ช่องค้นหาทรง pill พื้นขาวจางแบบ input ของเกม - listener (Enter/ล้างคำค้น) เป็นเรื่องของผู้เรียก
         public static InputField CreateSearchInputField(Transform parent, string placeholderText)
         {
