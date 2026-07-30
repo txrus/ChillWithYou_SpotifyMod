@@ -212,6 +212,22 @@ namespace ChillWithYou_SpotifyMod.Tests
             Assert.All(s.QueueRows, r => Assert.Equal(RowActionKind.None, r.Action.Kind));
         }
 
+        // Liked Songs (collection): ปกยังซ่อนเหมือน artist (ปกเปลี่ยนตามแต่ละเพลง ไม่มีปกตัวแทน)
+        // แต่แถวกดเล่นได้ - ต่างจาก artist ที่ Spotify ปฏิเสธ offset ยืนยันแล้ว ส่วน collection
+        // เพิ่งมีทางทดสอบจริงเป็นครั้งแรก (ผู้ใช้ทดสอบในเกม: เดิมกดไม่ได้ ต้องการกดเลือกเพลงได้)
+        [Fact]
+        public void ContextLoaded_Collection_RowsClickableCoverStillHidden()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            PanelState s = vm.ContextLoaded(Playlist(contextUri: "spotify:user:u1:collection"));
+
+            Assert.Equal("PLAYING FROM LIKED SONGS", s.HeaderSubLabel);
+            Assert.False(s.HeaderCoverVisible);
+            Assert.All(s.QueueRows, r => Assert.Equal(RowActionKind.PlayTrackInContext, r.Action.Kind));
+            Assert.Equal("spotify:user:u1:collection", s.QueueRows[0].Action.ContextUri);
+        }
+
         [Fact]
         public void ContextLoaded_EmptyTracks_ShowsUnavailableMessage()
         {

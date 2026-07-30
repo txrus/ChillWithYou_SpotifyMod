@@ -99,7 +99,7 @@ namespace ChillWithYou_SpotifyMod
                 // บล็อกทั้ง track list และ /me/tracks) -> ใช้คิวแทน
                 // ปก: album ทุกเพลงใช้ปกเดียวกัน ยืมปกเพลงที่เล่นอยู่ได้เลย / artist กับ Liked Songs
                 // ปกเปลี่ยนตามอัลบั้มของแต่ละเพลง ใช้ไม่ได้ -> null แล้วให้ VM ซ่อนช่องรูป
-                bool coverVaries = SpotifyContext.RowsViewOnly(contextUri);
+                bool coverVaries = SpotifyContext.HeaderCoverVaries(contextUri);
                 return new ContextFetchPlan
                 {
                     Kind = ContextFetchKind.Queue,

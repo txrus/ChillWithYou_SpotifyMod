@@ -342,9 +342,9 @@ namespace ChillWithYou_SpotifyMod
             Current.HeaderSubLabel = kind != null ? $"PLAYING FROM {kind}" : null;
 
             // artist/Liked Songs ไม่มีปกให้ใช้ (ปกเปลี่ยนตามอัลบั้มของแต่ละเพลง) -> ซ่อนช่องรูปไปเลย
-            bool viewOnly = SpotifyContext.RowsViewOnly(playlist.ContextUri);
-            Current.HeaderCoverVisible = !viewOnly;
-            Current.HeaderCoverBytes = viewOnly ? null : playlist.CoverImageBytes;
+            bool coverVaries = SpotifyContext.HeaderCoverVaries(playlist.ContextUri);
+            Current.HeaderCoverVisible = !coverVaries;
+            Current.HeaderCoverBytes = coverVaries ? null : playlist.CoverImageBytes;
 
             if (playlist.Tracks == null || playlist.Tracks.Count == 0)
             {
@@ -385,7 +385,7 @@ namespace ChillWithYou_SpotifyMod
             for (int i = 0; i < tracks.Count; i++)
             {
                 PlaylistTrackInfo t = tracks[i];
-                // artist/collection context: สั่งเล่นตามตำแหน่งไม่ได้ -> แถวกดไม่ได้ แสดงคิวอย่างเดียว
+                // artist context: Spotify ปฏิเสธ offset ยืนยันแล้ว -> แถวกดไม่ได้ แสดงคิวอย่างเดียว
                 bool clickable = !viewOnly && !string.IsNullOrEmpty(t.Id);
                 Current.QueueRows.Add(new PanelRow
                 {

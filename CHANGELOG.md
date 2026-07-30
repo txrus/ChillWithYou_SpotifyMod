@@ -25,6 +25,12 @@ not just bug fixes.
   - If the ID can't be fetched, the row is hidden entirely rather than shown and failing
     silently when tapped.
   - Lives in its own small section, so a `/me/playlists` failure can't take it down with it.
+  - Rows in the Liked Songs queue are now clickable, so you can jump straight to a specific
+    saved track instead of only playing from the top. Whether this stays working depends on
+    Spotify actually accepting an `offset` for a `collection` context - untested until now,
+    since there was previously no way to reach this context at all
+    (`SpotifyContext.RowsViewOnly` no longer treats `collection` the same as `artist`, which
+    is confirmed to reject it).
 - **Shuffle and repeat buttons** in the controls row, arranged the same way the Spotify app
   does (shuffle - prev - play - next - repeat), so the play button stays centered since one
   button was added on each side.

@@ -49,3 +49,15 @@ without ever touching `/me/tracks`. It can't show a track count or thumbnail up 
 (nothing was listed to get one from), and once playing, track *browsing* still goes through
 the existing collection-context queue fallback this ADR already describes, not a new listing
 call. This doesn't reopen the decision above; it's a different endpoint entirely.
+
+Rows in that queue were initially made unclickable by code choice - not because Spotify was
+ever asked and refused, but on the precautionary assumption that it would refuse an `offset`
+for a `collection` context the same way it refuses one for `artist`. That assumption was
+never actually tested, because there was previously no way to reach this context at all.
+Once the play button existed, a player confirmed in game that rows genuinely couldn't be
+selected - expected, since the row's click action was `None` and no offset request was ever
+sent. Rows were then made clickable (`SpotifyContext.RowsViewOnly` no longer includes
+`IsCollection`) specifically to find out whether Spotify's Play endpoint accepts an `offset`
+for this context - genuinely unknown until the next round of in-game testing confirms it
+either way. If Spotify does reject it, the failure is silent and harmless (the command just
+doesn't move playback, the same as any other rejected play command in this mod).
