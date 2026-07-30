@@ -341,6 +341,10 @@ namespace ChillWithYou_SpotifyMod
 
                 // flexibleWidth=1 อยู่แล้ว -> ขยายเต็มพื้นที่ที่เหลือ
                 _searchInput = SpotifyUiKit.CreateSearchInputField(_searchRow.transform, "Search songs, artists, albums…");
+                // ปุ่มในแถวนี้ล็อกความกว้างตัวเองไว้หมด (Search + My Lists + Devices = 204px) และช่องค้นหา
+                // ไม่มี preferredWidth เลยได้แต่เศษที่เหลือ - ตั้งพื้นไว้กันแผงแคบบีบจนพิมพ์ไม่ได้
+                LayoutElement searchInputLe = _searchInput.GetComponent<LayoutElement>();
+                if (searchInputLe != null) searchInputLe.minWidth = 110f;
                 // เคลียร์คำค้นหาแล้วต้องหุบผลลัพธ์กลับ ไม่ใช่รอกด Search ปุ่มอีกที
                 _searchInput.onValueChanged.AddListener(OnSearchTextChanged);
                 // กด Enter ให้ search ได้เลย ไม่ต้องกดปุ่ม Search
@@ -359,6 +363,14 @@ namespace ChillWithYou_SpotifyMod
                 myListsBtnLe.preferredWidth = 72f;
                 myListsBtnLe.minWidth = 72f;
                 myListsBtn.onClick.AddListener(() => SafeFireAndForget(OnMyPlaylistsClicked()));
+
+                // ปุ่มเลือกอุปกรณ์ที่จะให้เล่น - ทางออกของเคสที่กดปุ่มแล้วเงียบเพราะ Spotify
+                // ไม่มี active device อยู่เลย (เปิดเกมทิ้งไว้แล้วปิดแอป Spotify บนเครื่อง)
+                Button devicesBtn = SpotifyUiKit.CreatePillButton(_searchRow.transform, "Devices", filled: false, SpotifyUiKit.ButtonActive);
+                LayoutElement devicesBtnLe = devicesBtn.GetComponent<LayoutElement>();
+                devicesBtnLe.preferredWidth = 68f;
+                devicesBtnLe.minWidth = 68f;
+                devicesBtn.onClick.AddListener(() => SafeFireAndForget(OnDevicesClicked()));
 
                 // --- Search results list (แยก 4 หมวด: Tracks/Artists/Albums/Playlists) ---
                 _searchResultsList = new GameObject("SearchResultsList");
@@ -801,6 +813,45 @@ namespace ChillWithYou_SpotifyMod
             Plugin.RunOnMainThread(() => Apply(_vm.MyPlaylistsArrived(playlists)));
         }
 
+        // toggle รายการอุปกรณ์ที่ Spotify มองเห็น - โครงเดียวกับปุ่ม My Lists ทุกประการ
+        // ต่างกันที่ไม่มี cache: อุปกรณ์เปิด/ปิดตลอดเวลา กดดูทีไรต้องยิงใหม่เสมอ
+        private static async Task OnDevicesClicked()
+        {
+            if (!SpotifyAuth.IsLoggedIn) return;
+
+            // onClick เริ่มบน main thread และยังไม่ได้ await -> คุยกับ VM ตรงนี้ได้เลย
+            if (!_vm.DevicesClicked())
+            {
+                Apply(_vm.Current); // หุบรายการที่โชว์อยู่ ไม่ต้อง fetch
+                return;
+            }
+
+            System.Collections.Generic.List<SpotifyDeviceInfo> devices = await SpotifyApi.GetDevicesAsync();
+            Plugin.RunOnMainThread(() => Apply(_vm.DevicesArrived(devices)));
+        }
+
+        // ย้ายการเล่นไปเครื่องที่กด - ไม่ได้เปลี่ยนเพลงหรือคิว แค่เปลี่ยนว่าเสียงออกที่ไหน
+        // เลยไม่ใช้ PlayThen/RefreshAfterPlay (วงจรนั้นวนรอจนเห็น "เพลงเปลี่ยน" ซึ่งจะไม่มีวันเกิด)
+        private static async Task TransferToDevice(string deviceId)
+        {
+            if (!SpotifyAuth.IsLoggedIn) return;
+
+            // ส่งสถานะเล่น/หยุดปัจจุบันไปด้วย ผู้เล่นที่หยุดเพลงไว้แล้วสลับเครื่องไม่ควรโดนบังคับให้เล่น
+            if (!await SpotifyApi.TransferPlayback(deviceId, _session.IsPlaying)) return;
+
+            // Spotify ใช้เวลาครู่หนึ่งกว่าจะย้ายจริง - รอสั้นๆ ก่อนค่อยถามสถานะใหม่
+            await Task.Delay(500);
+            await RefreshNowPlaying();
+
+            // รายการอุปกรณ์ยังกางอยู่ - ดึงใหม่เพื่อให้ "Playing here" ย้ายไปอยู่เครื่องที่เพิ่งเลือก
+            System.Collections.Generic.List<SpotifyDeviceInfo> devices = await SpotifyApi.GetDevicesAsync();
+            Plugin.RunOnMainThread(() =>
+            {
+                if (_vm.Current.ResultsMode == ResultsMode.Devices)
+                    Apply(_vm.DevicesArrived(devices));
+            });
+        }
+
         // onEndEdit ยิงทั้งตอนกด Enter และตอน field เสีย focus (คลิกที่อื่น)
         // เลยต้องเช็คว่าเป็น Enter จริงๆ ก่อนค่อยยิง search (ISubmitHandler ใช้ไม่ได้ - event system ของเกมไม่ส่ง Submit มา)
         private static void OnSearchInputEndEdit(string text)
@@ -1164,6 +1215,9 @@ namespace ChillWithYou_SpotifyMod
                     break;
                 case RowActionKind.ToggleArtistAlbums:
                     SafeFireAndForget(ToggleArtistAlbums(action.ArtistId));
+                    break;
+                case RowActionKind.TransferPlayback:
+                    SafeFireAndForget(TransferToDevice(action.DeviceId));
                     break;
             }
         }

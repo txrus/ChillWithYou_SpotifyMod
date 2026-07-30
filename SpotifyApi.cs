@@ -7,6 +7,7 @@
 // envelope ของการยิง request (token/bearer/429/retry/log) ย้ายไป SpotifyGateway แล้ว
 // ไฟล์นี้เหลือหน้าที่แค่ประกอบ path + parse JSON ของ now-playing
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
 using System.Threading.Tasks;
@@ -58,6 +59,55 @@ namespace ChillWithYou_SpotifyMod
 
         private static string DeviceQuery(string prefix) =>
             string.IsNullOrEmpty(_lastKnownDeviceId) ? "" : $"{prefix}device_id={_lastKnownDeviceId}";
+
+        // === เลือกอุปกรณ์ที่จะให้เล่น ===
+
+        // รายชื่ออุปกรณ์ที่ Spotify มองเห็นอยู่ตอนนี้ (GET /me/player/devices)
+        // ใช้ scope user-read-playback-state ที่ขอไว้แล้ว - ไม่ต้องให้ผู้ใช้ authorize ใหม่
+        // ไม่ cache: รายการนี้เปลี่ยนตลอด (เปิด/ปิดแอปบนมือถือ ลำโพงหลุด wifi) กดดูทีไรต้องได้ของจริง
+        // คืน null = โหลดพลาด (ต่างจาก list ว่าง ซึ่งแปลว่า Spotify ไม่เห็นอุปกรณ์ไหนเลยจริงๆ)
+        public static async Task<List<SpotifyDeviceInfo>> GetDevicesAsync()
+        {
+            JObject obj = await SpotifyGateway.GetJsonAsync("me/player/devices");
+            if (obj == null) return null; // blocked / ยังไม่ login / error - gateway log ให้แล้ว
+
+            var devices = new List<SpotifyDeviceInfo>();
+            if (obj["devices"] is JArray items)
+            {
+                foreach (JToken it in items)
+                {
+                    if (!(it is JObject d)) continue;
+
+                    devices.Add(new SpotifyDeviceInfo
+                    {
+                        Id = (string)d["id"],
+                        Name = (string)d["name"],
+                        Type = (string)d["type"],
+                        IsActive = (bool?)d["is_active"] ?? false,
+                        IsRestricted = (bool?)d["is_restricted"] ?? false,
+                        VolumePercent = (int?)d["volume_percent"],
+                    });
+                }
+            }
+
+            return devices;
+        }
+
+        // ย้ายการเล่นไปอีกเครื่อง (PUT /me/player) - ทางแก้เคสคลาสสิกที่กดปุ่มในเกมแล้วเงียบ
+        // เพราะ Spotify ไม่มี active device อยู่เลย
+        // keepPlaying: ส่งสถานะปัจจุบันไป ไม่ใช่ true ตายตัว - ผู้เล่นที่หยุดเพลงไว้แล้วสลับเครื่อง
+        // ไม่ควรโดนบังคับให้เพลงเล่นขึ้นมาเอง
+        public static async Task<bool> TransferPlayback(string deviceId, bool keepPlaying)
+        {
+            if (string.IsNullOrEmpty(deviceId)) return false;
+
+            string body = $"{{\"device_ids\":[\"{deviceId}\"],\"play\":{(keepPlaying ? "true" : "false")}}}";
+            bool ok = await SpotifyGateway.SendAsync(HttpMethod.Put, "me/player", body);
+
+            // คำสั่งถัดไป (play/pause/next/seek) ต้องลงเครื่องใหม่ทันที ไม่ต้องรอ poll รอบหน้ามาบอก
+            if (ok) _lastKnownDeviceId = deviceId;
+            return ok;
+        }
 
         // เล่นเพลงเดียวจาก URI ตรงๆ (ใช้กับผลลัพธ์ search ประเภท track) - หลุด context เดิม
         public static Task<bool> PlayTrackUri(string trackUri) =>

@@ -329,6 +329,135 @@ namespace ChillWithYou_SpotifyMod.Tests
             Assert.False(s.NeedsReflow);
         }
 
+        // === รายการอุปกรณ์ / ย้ายการเล่น ===
+
+        private static SpotifyDeviceInfo Device(string id, string name, bool active = false,
+            bool restricted = false, int? volume = 50) =>
+            new SpotifyDeviceInfo
+            {
+                Id = id,
+                Name = name,
+                Type = "Computer",
+                IsActive = active,
+                IsRestricted = restricted,
+                VolumePercent = volume,
+            };
+
+        [Fact]
+        public void DevicesClicked_TogglesOpenThenClosed()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+
+            Assert.True(vm.DevicesClicked()); // ยังไม่กาง -> ผู้เรียกต้องไป fetch
+            vm.DevicesArrived(new List<SpotifyDeviceInfo> { Device("d1", "PC") });
+            Assert.Equal(ResultsMode.Devices, vm.Current.ResultsMode);
+
+            Assert.False(vm.DevicesClicked()); // กดซ้ำ = หุบ ไม่ต้อง fetch
+            Assert.Equal(ResultsMode.Empty, vm.Current.ResultsMode);
+            Assert.Empty(vm.Current.ResultsSections);
+            Assert.True(vm.Current.NeedsReflow);
+        }
+
+        [Fact]
+        public void DevicesArrived_BuildsRowsWithTransferAction()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            vm.DevicesClicked();
+            PanelState s = vm.DevicesArrived(new List<SpotifyDeviceInfo> { Device("d1", "Phone", volume: 80) });
+
+            PanelRow row = s.ResultsSections[0].Rows[0];
+            Assert.Equal("Devices", s.ResultsSections[0].Label);
+            Assert.Equal("Phone", row.Title);
+            Assert.Equal("Computer", row.Sub);
+            Assert.Equal("80%", row.Right);
+            Assert.Equal(RowActionKind.TransferPlayback, row.Action.Kind);
+            Assert.Equal("d1", row.Action.DeviceId);
+        }
+
+        // เครื่องที่เล่นอยู่: ย้ายไปตัวเองไม่มีความหมาย -> กดไม่ได้ แต่ต้องถูกทาเขียวให้เห็นว่าเสียงออกที่นี่
+        [Fact]
+        public void DevicesArrived_ActiveDeviceIsMarkedNotClickable()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            vm.DevicesClicked();
+            PanelState s = vm.DevicesArrived(new List<SpotifyDeviceInfo>
+            {
+                Device("d1", "PC", active: true),
+                Device("d2", "Phone"),
+            });
+
+            PanelRow active = s.ResultsSections[0].Rows[0];
+            Assert.Equal(RowActionKind.None, active.Action.Kind);
+            Assert.Equal("Computer · Playing here", active.Sub);
+            Assert.False(active.Muted); // แถวสำคัญสุดในลิสต์ ไม่ควรจาง
+            Assert.Equal("device:d1", s.SelectedRowKey);
+
+            Assert.Equal(RowActionKind.TransferPlayback, s.ResultsSections[0].Rows[1].Action.Kind);
+        }
+
+        // is_restricted = Spotify ห้ามสั่งเครื่องนี้ผ่าน Web API - กดแล้วจะเงียบ เลยไม่ให้กดตั้งแต่แรก
+        [Fact]
+        public void DevicesArrived_RestrictedDeviceIsUnclickableAndMuted()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            vm.DevicesClicked();
+            PanelState s = vm.DevicesArrived(new List<SpotifyDeviceInfo> { Device("d1", "TV", restricted: true) });
+
+            PanelRow row = s.ResultsSections[0].Rows[0];
+            Assert.Equal(RowActionKind.None, row.Action.Kind);
+            Assert.True(row.Muted);
+            Assert.Contains("Can't be controlled", row.Sub);
+        }
+
+        [Fact]
+        public void DevicesArrived_EmptyAndFailedShowDifferentMessages()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+
+            vm.DevicesClicked();
+            Assert.Contains("No devices found", vm.DevicesArrived(new List<SpotifyDeviceInfo>()).ResultsSections[0].Message);
+
+            vm.DevicesClicked(); // หุบ
+            vm.DevicesClicked(); // กางใหม่
+            Assert.Equal("Failed to load devices, try again", vm.DevicesArrived(null).ResultsSections[0].Message);
+        }
+
+        // ปุ่ม My Lists / Search กดทับกันได้ - พื้นที่ผลลัพธ์มีเจ้าของได้ทีละอย่าง
+        [Fact]
+        public void DevicesAndMyLists_ReplaceEachOther()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            vm.DevicesClicked();
+            vm.DevicesArrived(new List<SpotifyDeviceInfo> { Device("d1", "PC") });
+
+            Assert.True(vm.MyListsClicked()); // ไม่ใช่การหุบ device แต่เป็นการสลับไปอีกโหมด
+            vm.MyPlaylistsArrived(new List<UserPlaylistInfo> { new UserPlaylistInfo { Id = "p1", Name = "Mix" } });
+
+            Assert.Equal(ResultsMode.MyPlaylists, vm.Current.ResultsMode);
+            Assert.Equal("My Playlists", vm.Current.ResultsSections[0].Label);
+        }
+
+        [Fact]
+        public void SearchCleared_AlsoDropsDeviceList()
+        {
+            var vm = new PanelViewModel();
+            vm.ResetForInject(loggedIn: true);
+            vm.DevicesClicked();
+            vm.DevicesArrived(new List<SpotifyDeviceInfo> { Device("d1", "PC") });
+
+            PanelState s = vm.SearchCleared();
+
+            Assert.Equal(ResultsMode.Empty, s.ResultsMode);
+            Assert.Empty(s.ResultsSections);
+            Assert.True(vm.DevicesClicked()); // toggle กลับไปสถานะ "ยังไม่กาง" แล้ว
+        }
+
         // === ผลค้นหา ===
 
         private static SpotifySearchResults SomeResults() => new SpotifySearchResults

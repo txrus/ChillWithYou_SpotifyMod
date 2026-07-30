@@ -63,6 +63,18 @@ namespace ChillWithYou_SpotifyMod
         public string ReleaseYear; // "2003" - null เมื่อ Spotify ไม่ส่ง release_date มา
     }
 
+    // อุปกรณ์หนึ่งตัวที่ Spotify มองเห็นอยู่ (GET /me/player/devices)
+    // ใช้ทั้งโชว์รายการให้เลือก และสั่งย้ายการเล่นไปเครื่องนั้น (PUT /me/player)
+    public class SpotifyDeviceInfo
+    {
+        public string Id;
+        public string Name;
+        public string Type;         // "Computer" / "Smartphone" / "Speaker" ... ตามที่ Spotify ส่งมา
+        public bool IsActive;       // เครื่องที่กำลังเล่นอยู่ตอนนี้
+        public bool IsRestricted;   // Spotify ห้ามสั่งควบคุมเครื่องนี้ผ่าน Web API -> ย้ายไปไม่ได้
+        public int? VolumePercent;  // null เมื่อเครื่องไม่รายงานระดับเสียงมา
+    }
+
     public class SearchTrackResult
     {
         public string Id;
