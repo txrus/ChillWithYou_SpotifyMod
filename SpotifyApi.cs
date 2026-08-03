@@ -29,6 +29,12 @@ namespace ChillWithYou_SpotifyMod
         private static string _lastCoverUrl;
         private static byte[] _lastCoverBytes;
 
+        // URL ปกที่โหลดพลาดไปแล้ว - จำไว้เพื่อไม่ยิงซ้ำทุกรอบ poll (เพลงเดียวยาวเป็นนาที = warning
+        // เป็นสิบบรรทัดจากรูปใบเดียว) จำเป็น URL เลยไม่ต้องเคลียร์เอง: เปลี่ยนเพลงแล้ว URL ต่างไป
+        // ก็ได้ลองใหม่เองอัตโนมัติ - แลกกับว่าปกใบเดิมจะไม่ถูกลองใหม่จนกว่าจะเปลี่ยนเพลง
+        // หลักการเดียวกับ RowThumbnails._failed แต่ที่นี่จำแค่ URL เดียวพอ เพราะโหลดทีละปก
+        private static string _failedCoverUrl;
+
         // รหัสผู้ใช้ Spotify (จาก GET /me) - แคชไว้ทั้ง session เพราะไม่มีทางเปลี่ยนได้โดยไม่ login ใหม่
         // ใช้สร้าง context uri ของคลังเพลง ("spotify:user:{id}:collection") สำหรับปุ่ม Liked Songs
         private static string _cachedUserId;
@@ -223,13 +229,18 @@ namespace ChillWithYou_SpotifyMod
                     {
                         thumbBytes = _lastCoverBytes; // ปกเดิม ใช้ของที่โหลดไว้แล้ว
                     }
-                    else
+                    else if (coverUrl != _failedCoverUrl) // ปกใบนี้เพิ่งพลาดไป ไม่ยิงซ้ำจนกว่าจะเปลี่ยนเพลง
                     {
                         thumbBytes = await SpotifyGateway.GetImageAsync(coverUrl);
                         if (thumbBytes != null)
                         {
                             _lastCoverUrl = coverUrl;
                             _lastCoverBytes = thumbBytes;
+                            _failedCoverUrl = null;
+                        }
+                        else
+                        {
+                            _failedCoverUrl = coverUrl;
                         }
                     }
                 }
