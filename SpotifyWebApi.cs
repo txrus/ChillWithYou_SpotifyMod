@@ -78,7 +78,29 @@ namespace ChillWithYou_SpotifyMod
                 // ดึง meta + track list ใน call เดียวผ่าน /playlists/{id}?fields=...
                 // เหตุผล: endpoint แยก /playlists/{id}/tracks โดน 403 กับ app ใหม่ใน development mode
                 // แต่ endpoint หลัก /playlists/{id} ยังใช้ได้ปกติ (แถมประหยัด API call ลงครึ่งนึงด้วย)
-                (string name, string coverUrl, List<PlaylistTrackInfo> tracks) = await GetPlaylistFullAsync(playlistId, maxTracks);
+                (string name, string coverUrl, List<PlaylistTrackInfo> tracks, bool notFound) =
+                    await GetPlaylistFullAsync(playlistId, maxTracks);
+
+                if (notFound)
+                {
+                    // 404 ไม่ใช่อาการชั่วคราว: playlist ที่ Spotify สร้างเอง (Daily Mix / Radio / Discover
+                    // Weekly - id ขึ้นต้น 37i9dQZF1E) ถูกตัดจาก Web API ฝั่ง third-party ไปแล้ว ยิงกี่รอบ
+                    // ก็ 404 เหมือนเดิม -> เลิกถาม /playlists/{id} แล้วอ่านคิวจริงจาก /me/player/queue แทน
+                    // ซึ่งเป็น playback endpoint ที่ไม่โดนตัด (ทางเดียวกับ context ที่ไม่ใช่ playlist)
+                    Plugin.Log.LogInfo($"[SpotifyWebApi] Playlist {playlistId} อ่านผ่าน API ไม่ได้ " +
+                        "(404 - น่าจะเป็น playlist ที่ Spotify สร้างเอง) - ใช้คิวเพลงจาก /me/player/queue แทน");
+
+                    PlaylistInfo fromQueue = await GetContextQueueAsync(
+                        $"spotify:playlist:{playlistId}", "Now playing", null, maxTracks);
+
+                    // คิวก็อ่านไม่ได้ (พลาดชั่วคราว) - คืนของเก่า ไม่ commit cache รอบหน้าค่อยลองใหม่
+                    if (fromQueue == null) return _cachedPlaylistInfo;
+
+                    // cache เหมือน playlist ปกติ เพื่อให้ poll รอบถัดไปที่ id เดิมไม่ยิงชน 404 ซ้ำอีก
+                    _lastPlaylistId = playlistId;
+                    _cachedPlaylistInfo = fromQueue;
+                    return _cachedPlaylistInfo;
+                }
 
                 if (string.IsNullOrEmpty(name))
                 {
@@ -215,11 +237,13 @@ namespace ChillWithYou_SpotifyMod
 
         // ดึงชื่อ + ปก + track list ใน call เดียวจาก /playlists/{id} (endpoint แยก /tracks โดน 403 กับ app ใหม่)
         // name == null แปลว่า fetch พลาดทั้งก้อน ให้ผู้เรียก retry รอบหน้า
-        private static async Task<(string name, string coverUrl, List<PlaylistTrackInfo> tracks)> GetPlaylistFullAsync(string playlistId, int maxTracks)
+        // notFound=true คือ Spotify ตอบ 404 ซึ่งเป็นอาการถาวร ไม่ใช่ "พลาดชั่วคราว" - ผู้เรียกต้องแยกสองอย่างนี้
+        // ออกจากกัน ไม่งั้นจะ retry playlist ที่ไม่มีวันอ่านได้ไปทุกรอบ poll
+        private static async Task<(string name, string coverUrl, List<PlaylistTrackInfo> tracks, bool notFound)> GetPlaylistFullAsync(string playlistId, int maxTracks)
         {
-            JObject obj = await SpotifyGateway.GetJsonAsync(
+            (JObject obj, bool notFound) = await SpotifyGateway.GetJsonOrNotFoundAsync(
                 $"playlists/{playlistId}?fields=name,images,tracks.items(track(id,name,duration_ms,artists(name)))");
-            if (obj == null) return (null, null, null); // null = สัญญาณว่า "พลาด" ให้ผู้เรียก retry แทนที่จะ cache ค้าง
+            if (obj == null) return (null, null, null, notFound); // null = สัญญาณว่า "พลาด" ให้ผู้เรียก retry แทนที่จะ cache ค้าง
 
             string name = obj["name"]?.ToString();
 
@@ -251,7 +275,7 @@ namespace ChillWithYou_SpotifyMod
                 }
             }
 
-            return (name, coverUrl, tracks);
+            return (name, coverUrl, tracks, false);
         }
 
         // สร้าง PlaylistInfo จากคิวเพลง สำหรับ context ที่ไม่ใช่ playlist (artist/album)
