@@ -4,6 +4,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/) and uses [Semanti
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-08-17
+
+The mod ships as a ready-made DLL from this version on. Nothing about the player changed -
+this is entirely about the install, which until now required the .NET SDK and a build from
+source purely to compile in one string. That's a minor bump rather than a patch because it
+changes what the download *is*, and because upgraders have one step to do (their old DLL had
+the ID baked in; the new one reads it from the config file).
+
+### Changed
+- **The Spotify Client ID is now a setting, not a source edit.** It's read at startup from
+  `BepInEx\config\com.pw_txr.spotifyplayer.cfg` (`[Spotify] ClientId`), so installing the mod
+  no longer requires the .NET SDK or a build — the reason given by more than one player for
+  not using it at all. Surrounding spaces and quotes in the pasted value are stripped, since
+  copying from the dashboard tends to bring them along.
+  - Falls back to the `CHILLWITHYOU_SPOTIFY_CLIENT_ID` environment variable, then to a value
+    baked in at build time. That last one keeps every existing source build working untouched;
+    `build.ps1 -ClientId` still bakes it in, but the parameter is now optional and the script
+    no longer prompts for it.
+  - Missing ID is reported where the player can see it: a warning in the BepInEx log at
+    startup, and `Connect failed: no Spotify Client ID set - add it to BepInEx\config\...`
+    in the panel instead of a browser tab that can only fail.
+  - The ID is logged masked (`a1b2****cdef`), because player logs get pasted into bug reports.
+
+### Fixed
+- A missing or misconfigured Client ID no longer deletes a perfectly good saved login. The
+  refresh call would have gone out with an empty `client_id`, come back `400`, and been read
+  as "refresh token revoked" — which wipes the stored token and forces a fresh browser login.
+
 ## [1.4.0] - 2026-07-30
 
 Rolls up four merged PRs that had been sitting unreleased (queue-window-slide fix, device

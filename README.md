@@ -16,13 +16,26 @@ A BepInEx mod for **Chill with You: Lo-Fi Story** — adds an in-game Spotify pl
 
 ## Installation (for players)
 
+**No .NET SDK and no building required** — the Client ID goes in a config file, not in the code.
+
 1. Install [BepInEx 5.x (x64)](https://github.com/BepInEx/BepInEx/releases) into the game folder, then launch the game once so BepInEx creates its folders.
-2. Put **both** files from `bin\Release\netstandard2.1\` (build them yourself using the steps below) into `<game folder>\BepInEx\plugins`:
+2. Put **both** files from the release into `<game folder>\BepInEx\plugins`:
    - `ChillWithYou_SpotifyMod.dll`
    - `System.Security.Cryptography.ProtectedData.dll` — the mod uses this to encrypt your refresh token with Windows DPAPI. If this file is missing, **login will fail** (the token exchange throws `Could not load file or assembly`).
-3. Launch the game and click the Spotify login button in-game — your browser opens Spotify's authorization page; approve it.
+3. Create your Spotify app and copy its Client ID (steps in the next section).
+4. Launch the game once with the mod installed. This creates `<game folder>\BepInEx\config\com.pw_txr.spotifyplayer.cfg`.
+5. Open that file in any text editor and paste your Client ID:
+   ```ini
+   [Spotify]
+   ClientId = a1b2c3d4e5f6...
+   ```
+6. Restart the game, then click **Connect Spotify** in-game — your browser opens Spotify's authorization page; approve it.
 
-## Creating a Spotify App (required before building)
+> Prefer an environment variable? Set `CHILLWITHYOU_SPOTIFY_CLIENT_ID` instead and leave `ClientId` empty. The config file wins if both are set.
+>
+> If you forget this step, the panel says so when you press Connect (`no Spotify Client ID set - add it to BepInEx\config\com.pw_txr.spotifyplayer.cfg`) instead of failing silently.
+
+## Creating a Spotify App (required)
 
 The mod needs your own **Client ID** from the Spotify Developer Dashboard:
 
@@ -33,11 +46,23 @@ The mod needs your own **Client ID** from the Spotify Developer Dashboard:
    http://127.0.0.1:8901/callback/
    ```
 4. Under "Which API/SDKs are you planning to use?", tick **Web API**, then Save.
-5. Open the app's Settings page and copy the **Client ID** to use with the build script below.
+5. Open the app's Settings page and copy the **Client ID** into the config file (see step 5 above).
 
 > You only need the Client ID — **no Client Secret** — because the mod uses OAuth with PKCE.
 
-## Easy build (recommended)
+## Where the Client ID comes from
+
+The mod checks three places, in this order, once at startup:
+
+| Order | Source | Notes |
+|---|---|---|
+| 1 | `BepInEx\config\com.pw_txr.spotifyplayer.cfg` → `[Spotify] ClientId` | What players should use. Surrounding spaces and quotes are stripped for you |
+| 2 | `CHILLWITHYOU_SPOTIFY_CLIENT_ID` environment variable | Handy for keeping the ID out of the game folder |
+| 3 | A value baked in at build time | Only for source builds — see `-ClientId` below |
+
+The value is read once in `Plugin.Awake`, so edit the file with the game closed (or restart after editing).
+
+## Building from source (optional — for development)
 
 You need [.NET SDK 8.0 or newer](https://dotnet.microsoft.com/download) (developed/tested with 10.0.302) and the game (with BepInEx installed). Open PowerShell in the project folder and run:
 
@@ -45,26 +70,20 @@ You need [.NET SDK 8.0 or newer](https://dotnet.microsoft.com/download) (develop
 .\build.ps1
 ```
 
-The script asks for your Client ID and builds the DLL for you (you can also pass the ID as a parameter):
+No Client ID is needed to build — set it in the config file at runtime like everyone else. If you'd rather bake it into the DLL (the old behavior), pass it in:
 
 ```powershell
 .\build.ps1 -ClientId "your32charclientid"
 
 # If the game isn't at the default path, specify it:
-.\build.ps1 -ClientId "..." -GameDir "C:\Program Files (x86)\Steam\steamapps\common\Chill with You Lo-Fi Story"
+.\build.ps1 -GameDir "C:\Program Files (x86)\Steam\steamapps\common\Chill with You Lo-Fi Story"
 ```
 
-You get files in `bin\Release\netstandard2.1\`, and if the game folder is found, **both `ChillWithYou_SpotifyMod.dll` and `System.Security.Cryptography.ProtectedData.dll`** are copied into `BepInEx\plugins` automatically — the Client ID is embedded only in the DLL, and the source file is always restored after the build.
+You get files in `bin\Release\netstandard2.1\`, and if the game folder is found, **both `ChillWithYou_SpotifyMod.dll` and `System.Security.Cryptography.ProtectedData.dll`** are copied into `BepInEx\plugins` automatically. With `-ClientId`, the ID is embedded only in the DLL and the source file is always restored after the build.
 
 > If the script won't run because of the execution policy, run it with `powershell -ExecutionPolicy Bypass -File .\build.ps1`
 
 ## Building manually (without the script)
-
-Edit `SpotifyAuth.cs` and replace `ENTER_YOUR_CLIENT_ID` with your Client ID:
-
-```csharp
-private const string ClientId = "ENTER_YOUR_CLIENT_ID";
-```
 
 The project references DLLs directly from the game folder. The default points to:
 
@@ -97,6 +116,7 @@ After a successful build, both `ChillWithYou_SpotifyMod.dll` and its dependency 
 | File | Purpose |
 |---|---|
 | `plugin.cs` | Plugin entry point + MainThreadDispatcher |
+| `SpotifyConfig.cs` | Reads the Client ID from the BepInEx config file / environment variable |
 | `SpotifyAuth.cs` | OAuth PKCE flow + local callback server |
 | `SpotifyTokenStore.cs` | Stores the token on disk, encrypted (DPAPI) |
 | `SpotifyGateway.cs` | The single request envelope every API call goes through: bearer header, 429 → rate limiter, retry on transient 401/403, error logging |
@@ -154,7 +174,9 @@ This mod was made to learn, and almost everything about it was learned from othe
 
 See the per-version history in [CHANGELOG.md](CHANGELOG.md).
 
-Latest version **v1.4.0** — shuffle and repeat toggle right from the panel (with a tooltip so the small icons are readable), a volume slider sits next to the transport buttons, and a Devices button lets you switch playback to another device without leaving the game. Hovering the progress bar previews the time you're about to seek to before you click. Long playlists no longer lose track of what's playing once you're past the first 21 songs. My Lists also gets a Liked Songs row that plays your saved tracks from the top.
+Latest version **v1.5.0** — the mod ships as a ready-made DLL, and your Spotify Client ID goes in `BepInEx\config\com.pw_txr.spotifyplayer.cfg` instead of the source, so installing it no longer needs the .NET SDK or a build. Upgrading from an older version? Your old DLL had the ID compiled in, so paste it into the config file once — your saved login carries over.
+
+v1.4.0 — shuffle and repeat toggle right from the panel (with a tooltip so the small icons are readable), a volume slider sits next to the transport buttons, and a Devices button lets you switch playback to another device without leaving the game. Hovering the progress bar previews the time you're about to seek to before you click. Long playlists no longer lose track of what's playing once you're past the first 21 songs. My Lists also gets a Liked Songs row that plays your saved tracks from the top.
 
 v1.3.0 — the panel keeps up with whatever else is driving Spotify: skip, pause or seek from your phone and the game follows within a few seconds, but only while the panel is actually open. You can also drag the progress bar to seek from inside the game.
 

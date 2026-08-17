@@ -7,7 +7,7 @@ using UnityEngine;
 
 namespace ChillWithYou_SpotifyMod
 {
-    [BepInPlugin("com.pw_txr.spotifyplayer", "Spotify Player Mod", "1.4.0")]
+    [BepInPlugin("com.pw_txr.spotifyplayer", "Spotify Player Mod", "1.5.0")]
     public class Plugin : BaseUnityPlugin
     {
         internal static ManualLogSource Log;
@@ -23,12 +23,16 @@ namespace ChillWithYou_SpotifyMod
             Log = Logger;
             Log.LogInfo("[Plugin] Awake() called. กำลังเริ่มต้นปลั๊กอิน...");
 
+            // ต้องมาก่อนทุกอย่างที่แตะ SpotifyAuth - Bind() เป็นตัวสร้างไฟล์ config ให้ผู้เล่นด้วย
+            // ฉะนั้นแม้ยังไม่มี Client ID ก็ต้องเรียก ไม่งั้นผู้เล่นจะไม่มีไฟล์ให้แก้เลย
+            SpotifyConfig.Load(Config);
+
             // 1. เรียกใช้งาน Dispatcher อมตะของเราทันทีที่ปลั๊กอินตื่นขึ้นมา
             MainThreadDispatcher.Initialize();
 
             _harmony = new Harmony("com.pw_txr.spotifyplayer");
             _harmony.PatchAll(typeof(SpotifyPatches));
-            Log.LogInfo("[SpotifyMod v1.4.0] loaded.");
+            Log.LogInfo("[SpotifyMod v1.5.0] loaded.");
 
             bool resumed = await SpotifyAuth.TryResumeSessionAsync();
             Log.LogInfo(resumed ? "[Spotify] Resume session สำเร็จ" : "[Spotify] ยังไม่ได้ login");
