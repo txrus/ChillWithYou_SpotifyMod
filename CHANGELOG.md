@@ -4,6 +4,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/) and uses [Semanti
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-08-17
+
+The mod ships as a ready-made DLL from this version on. Nothing about the player changed -
+this is entirely about the install, which until now required the .NET SDK and a build from
+source purely to compile in one string. That's a minor bump rather than a patch because it
+changes what the download *is*, and because upgraders have one step to do (their old DLL had
+the ID baked in; the new one reads it from the config file).
+
 ### Changed
 - **The Spotify Client ID is now a setting, not a source edit.** It's read at startup from
   `BepInEx\config\com.pw_txr.spotifyplayer.cfg` (`[Spotify] ClientId`), so installing the mod

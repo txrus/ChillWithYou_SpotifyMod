@@ -174,7 +174,9 @@ This mod was made to learn, and almost everything about it was learned from othe
 
 See the per-version history in [CHANGELOG.md](CHANGELOG.md).
 
-Latest version **v1.4.0** — shuffle and repeat toggle right from the panel (with a tooltip so the small icons are readable), a volume slider sits next to the transport buttons, and a Devices button lets you switch playback to another device without leaving the game. Hovering the progress bar previews the time you're about to seek to before you click. Long playlists no longer lose track of what's playing once you're past the first 21 songs. My Lists also gets a Liked Songs row that plays your saved tracks from the top.
+Latest version **v1.5.0** — the mod ships as a ready-made DLL, and your Spotify Client ID goes in `BepInEx\config\com.pw_txr.spotifyplayer.cfg` instead of the source, so installing it no longer needs the .NET SDK or a build. Upgrading from an older version? Your old DLL had the ID compiled in, so paste it into the config file once — your saved login carries over.
+
+v1.4.0 — shuffle and repeat toggle right from the panel (with a tooltip so the small icons are readable), a volume slider sits next to the transport buttons, and a Devices button lets you switch playback to another device without leaving the game. Hovering the progress bar previews the time you're about to seek to before you click. Long playlists no longer lose track of what's playing once you're past the first 21 songs. My Lists also gets a Liked Songs row that plays your saved tracks from the top.
 
 v1.3.0 — the panel keeps up with whatever else is driving Spotify: skip, pause or seek from your phone and the game follows within a few seconds, but only while the panel is actually open. You can also drag the progress bar to seek from inside the game.
 
