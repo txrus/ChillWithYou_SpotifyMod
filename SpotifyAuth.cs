@@ -14,8 +14,9 @@ namespace ChillWithYou_SpotifyMod
     // จัดการ OAuth 2.0 Authorization Code + PKCE (ไม่ต้องใช้ client secret เลย ปลอดภัยสำหรับ mod ฝั่ง client)
     internal static class SpotifyAuth
     {
-        // ⚠️ ใส่ Client ID ของท่านเองจาก https://developer.spotify.com/dashboard
-        private const string ClientId = "ENTER_YOUR_CLIENT_ID";
+        // ผู้เล่นตั้งเองใน BepInEx config (ดู SpotifyConfig) - ไม่ใช่ const แล้ว จึงอาจว่างได้
+        // ทุกจุดที่ใช้ต้องผ่าน RequireClientId() ก่อน ห้ามยิง OAuth ด้วยค่าว่าง
+        private static string ClientId => SpotifyConfig.ClientId;
 
         // ⚠️ ต้องไปเพิ่ม URI นี้ใน "Redirect URIs" ของ Spotify App settings ให้ตรงเป๊ะ
         private const string RedirectUri = "http://127.0.0.1:8901/callback/";
@@ -48,6 +49,12 @@ namespace ChillWithYou_SpotifyMod
         {
             try
             {
+                if (!SpotifyConfig.HasClientId)
+                {
+                    onFailed?.Invoke(SpotifyConfig.MissingClientIdMessage);
+                    return;
+                }
+
                 bool ok = await LoginWithBrowserAsync();
                 if (ok)
                 {
@@ -111,6 +118,15 @@ namespace ChillWithYou_SpotifyMod
         // ถ้าไม่มี/ไม่ผ่าน จะ throw เพื่อให้ผู้เรียกรู้ว่าต้องพา user ไป login ใหม่ (ผ่านปุ่ม Connect)
         public static async Task RefreshAccessToken()
         {
+            // ต้องเช็คก่อน LoadRefreshToken เสมอ: ถ้าไม่มี Client ID แล้วปล่อยให้ยิงจริง Spotify จะตอบ 400
+            // แล้วโค้ดข้างล่างจะเข้าใจผิดว่า refresh token ถูก revoke แล้วลบทิ้ง - ผู้เล่นที่แค่ลืมใส่ค่า
+            // ในไฟล์ config (หรือย้ายไฟล์แล้ว config หาย) จะเสีย session ที่ยังดีอยู่ไปฟรีๆ
+            if (!SpotifyConfig.HasClientId)
+            {
+                IsLoggedIn = false;
+                throw new InvalidOperationException(SpotifyConfig.MissingClientIdMessage);
+            }
+
             string storedRefreshToken = SpotifyTokenStore.LoadRefreshToken();
             if (string.IsNullOrEmpty(storedRefreshToken))
             {

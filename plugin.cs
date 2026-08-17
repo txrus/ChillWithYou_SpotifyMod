@@ -23,6 +23,10 @@ namespace ChillWithYou_SpotifyMod
             Log = Logger;
             Log.LogInfo("[Plugin] Awake() called. กำลังเริ่มต้นปลั๊กอิน...");
 
+            // ต้องมาก่อนทุกอย่างที่แตะ SpotifyAuth - Bind() เป็นตัวสร้างไฟล์ config ให้ผู้เล่นด้วย
+            // ฉะนั้นแม้ยังไม่มี Client ID ก็ต้องเรียก ไม่งั้นผู้เล่นจะไม่มีไฟล์ให้แก้เลย
+            SpotifyConfig.Load(Config);
+
             // 1. เรียกใช้งาน Dispatcher อมตะของเราทันทีที่ปลั๊กอินตื่นขึ้นมา
             MainThreadDispatcher.Initialize();
 
